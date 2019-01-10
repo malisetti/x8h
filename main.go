@@ -66,9 +66,9 @@ type itemList []int
 type unixTime int64
 
 type item struct {
-	Time  unixTime `json:"time"`
 	Title string   `json:"title"`
 	URL   string   `json:"url"`
+	Added unixTime `json:"-"`
 }
 
 type stories struct {
@@ -95,7 +95,7 @@ func main() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	storiesURLs := []string{topStories, bestStories}
+	storiesURLs := []string{topStories}
 	incomingItems := make(chan itemList)
 	defer close(incomingItems)
 
@@ -125,7 +125,7 @@ func main() {
 				}
 
 				// send items
-				incomingItems <- items
+				incomingItems <- items[:30] // homepage shows only 30
 			}(storiesURL)
 		}
 		wg.Wait()
@@ -165,9 +165,7 @@ func main() {
 							log.Println(err)
 							return
 						}
-						if time.Since(time.Unix(int64(item.Time), 0)).Hours() > 8 {
-							return
-						}
+						item.Added = unixTime(time.Now().Unix())
 
 						st.Lock()
 						defer st.Unlock()
@@ -188,7 +186,7 @@ func main() {
 			select {
 			case <-ticker2.C:
 				for id, it := range st.list {
-					if time.Since(time.Unix(int64(it.Time), 0)).Hours() > 8 {
+					if time.Since(time.Unix(int64(it.Added), 0)).Hours() > 8 {
 						st.Lock()
 						delete(st.list, id)
 						st.Unlock()
