@@ -20,6 +20,47 @@ const (
 	hnPostLink  = "https://news.ycombinator.com/item?id=%d"
 )
 
+type limitMap struct {
+	sync.Mutex
+	keys []int
+	m    map[int]struct{}
+	l    int
+}
+
+func (lm *limitMap) insert(k int) {
+	lm.Lock()
+	defer lm.Unlock()
+
+	lm.m[k] = struct{}{}
+	lm.keys = append(lm.keys, k)
+
+	if len(lm.keys) >= lm.l {
+		delete(lm.m, lm.keys[0])
+		lm.keys = lm.keys[1:]
+	}
+}
+
+func (lm *limitMap) has(k int) bool {
+	lm.Lock()
+	defer lm.Unlock()
+
+	_, ok := lm.m[k]
+
+	return ok
+}
+
+func newLM(m map[int]struct{}, l int) *limitMap {
+	keys := []int{}
+	for k, _ := range m {
+		keys = append(keys, k)
+	}
+	return &limitMap{
+		keys: keys,
+		m:    m,
+		l:    l,
+	}
+}
+
 type itemList []int
 
 type unixTime int64
@@ -57,6 +98,9 @@ func main() {
 	storiesURLs := []string{topStories, bestStories}
 	incomingItems := make(chan itemList)
 	defer close(incomingItems)
+
+	visited := make(map[int]struct{})
+	lm := newLM(visited, 2000) // limit the tracking to 2000 items
 
 	fetchStories := func() {
 		var wg sync.WaitGroup
@@ -109,6 +153,12 @@ func main() {
 						if _, ok := st.list[itemID]; ok {
 							return
 						}
+
+						if lm.has(itemID) {
+							return
+						}
+
+						lm.insert(itemID)
 
 						item, err := fetchItem(itemID)
 						if err != nil {
