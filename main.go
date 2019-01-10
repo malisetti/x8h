@@ -58,36 +58,42 @@ func main() {
 	incomingItems := make(chan itemList)
 	defer close(incomingItems)
 
+	fetchStories := func() {
+		var wg sync.WaitGroup
+		for _, storiesURL := range storiesURLs {
+			wg.Add(1)
+			go func(storiesURL string) {
+				defer wg.Done()
+				resp, err := http.Get(storiesURL)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+
+				defer resp.Body.Close()
+
+				decoder := json.NewDecoder(resp.Body)
+				var items itemList
+				err = decoder.Decode(&items)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+
+				// send items
+				incomingItems <- items
+			}(storiesURL)
+		}
+		wg.Wait()
+	}
+
+	go fetchStories()
+
 	storyFetcher := func(ctx context.Context) {
 		for {
 			select {
 			case <-ticker.C:
-				var wg sync.WaitGroup
-				for _, storiesURL := range storiesURLs {
-					wg.Add(1)
-					go func(storiesURL string) {
-						defer wg.Done()
-						resp, err := http.Get(storiesURL)
-						if err != nil {
-							log.Println(err)
-							return
-						}
-
-						defer resp.Body.Close()
-
-						decoder := json.NewDecoder(resp.Body)
-						var items itemList
-						err = decoder.Decode(&items)
-						if err != nil {
-							log.Println(err)
-							return
-						}
-
-						// send items
-						incomingItems <- items
-					}(storiesURL)
-				}
-				wg.Wait()
+				fetchStories()
 			case <-ctx.Done():
 				return
 			}
