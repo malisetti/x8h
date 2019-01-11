@@ -1,15 +1,22 @@
 <html>
-<h1>Top HN Posts - since last 8hrs</h1>
-<ul>
-  {{ range $key, $item := . }}
-  <li>
-    {{ if eq $item.URL "" }}
-    <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
-    {{else}}
-    <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a><strong> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">-></a></strong>
-    {{end}}
-  </li>
-  {{ end }}
-</ul>
+
+<head>
+  <title>Top HN Posts - since last 8hrs</title>
+</head>
+
+<body>
+  <h1>Top HN Posts - since last 8hrs</h1>
+  <ul>
+    {{ range $key, $item := . }}
+    <li>
+      {{ if eq $item.URL "" }}
+      <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
+      {{else}}
+      <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a><strong> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">-></a></strong>
+      {{end}}
+    </li>
+    {{ end }}
+  </ul>
+</body>
 
 </html>
