@@ -21,6 +21,7 @@ const (
 	storyLink            = "https://hacker-news.firebaseio.com/v0/item/%d.json"
 	hnPostLink           = "https://news.ycombinator.com/item?id=%d"
 	frontPageNumArticles = 30
+	hnPollTime           = 5 * time.Minute
 )
 
 type limitMap struct {
@@ -113,8 +114,13 @@ func main() {
 			i := i
 			tckr := tckr
 			eg.Go(func() error {
-				<-tckr.C
-				return calls[i](ctx)
+				for range tckr.C {
+					err := calls[i](ctx)
+					if err != nil {
+						return err
+					}
+				}
+				return nil
 			})
 		}
 
@@ -226,7 +232,6 @@ func main() {
 		return nil
 	}
 
-	const hnPollTime = 5 * time.Minute
 	fiveMinTicker := time.NewTicker(hnPollTime)
 	defer fiveMinTicker.Stop()
 
@@ -234,6 +239,7 @@ func main() {
 		st.Lock()
 		defer st.Unlock()
 		log.Println(st.list)
+		log.Println(visited)
 		return nil
 	}
 
@@ -307,7 +313,6 @@ func main() {
 	})
 	eg.Go(func() error {
 		sig := <-stop
-		cancel()
 		return fmt.Errorf("interrupted with signal %s, aborting", sig.String())
 	})
 
@@ -315,5 +320,7 @@ func main() {
 	if err != nil {
 		log.Println(err)
 	}
+
+	cancel()
 	log.Println("END")
 }
