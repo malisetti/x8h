@@ -7,7 +7,7 @@
 <body>
   <h1>Top HN Posts - since last 8hrs</h1>
   <ul>
-    {{ range $key, $item := . }}
+    {{ range $key, $item := .Data }}
     <li>
       {{ if eq $item.URL "" }}
       <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
@@ -18,5 +18,9 @@
     {{ end }}
   </ul>
 </body>
+
+<footer>
+  <p>Visits : {{ .VisitorNumber }}</p>
+</footer>
 
 </html>

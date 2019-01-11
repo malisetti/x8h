@@ -274,10 +274,28 @@ func main() {
 		}
 	}
 
+	visitCounterCh := make(chan int)
+	defer close(visitCounterCh)
+
+	var visitCount int
+	visitCounter := func() error {
+		for c := range visitCounterCh {
+			visitCount += c
+		}
+		return nil
+	}
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			visitCounterCh <- 1
+		}()
+
 		st.Lock()
 		defer st.Unlock()
-		err = tmpl.Execute(w, st.list)
+		data := make(map[string]interface{})
+		data["Data"] = st.list
+		data["VisitorNumber"] = visitCount
+		err = tmpl.Execute(w, data)
 		if err != nil {
 			errCh <- err
 		}
@@ -314,6 +332,9 @@ func main() {
 	eg.Go(func() error {
 		sig := <-stop
 		return fmt.Errorf("interrupted with signal %s, aborting", sig.String())
+	})
+	eg.Go(func() error {
+		return visitCounter()
 	})
 
 	err = eg.Wait()
