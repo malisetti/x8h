@@ -196,20 +196,16 @@ func main() {
 	}
 
 	storyRemover := func(ctx context.Context) error {
-		log.Println("in story remover")
 		st.Lock()
 		defer st.Unlock()
 		for id, it := range st.list {
-			log.Println("looping")
 			if ctx.Err() != nil {
-				log.Println("ctx error")
 				return nil
 			}
 			if time.Since(time.Unix(int64(it.Added), 0)).Seconds() > 8*60*60 {
 				delete(st.list, id)
 			}
 		}
-		log.Println("done story removing") //good
 		return nil
 	}
 
@@ -281,10 +277,6 @@ func main() {
 			log.Println("starting ticker ticker")
 			eg, ctxi := errgroup.WithContext(appCtx)
 			eg.Go(func() error {
-				log.Println("123456789012345678901234567890")
-				return nil
-			})
-			eg.Go(func() error {
 				log.Println("starting top stories fetcher")
 				return topStoriesFetcher(ctxi, frontPageNumArticles)
 			})
@@ -296,7 +288,10 @@ func main() {
 				log.Println("starting list counter")
 				return listCounter()
 			})
-			log.Println(eg.Wait())
+			err := eg.Wait()
+			if err != nil {
+				errCh <- err
+			}
 		}
 	}()
 
@@ -323,15 +318,15 @@ func main() {
 		return srv.ListenAndServe()
 	})
 	eg.Go(func() error {
+		defer func() {
+			cancel()
+			fiveMinTicker.Stop()
+			close(incomingItems)
+			close(visitCounterCh)
+			close(errCh)
+		}()
 		sig := <-stop
 		log.Printf("interrupted with signal %s, aborting\n", sig.String())
-
-		cancel()
-		fiveMinTicker.Stop()
-		close(errCh)
-		close(incomingItems)
-		close(visitCounterCh)
-
 		return srv.Shutdown(ctx)
 	})
 	eg.Go(visitCounter)
