@@ -102,7 +102,6 @@ func main() {
 	lm := newLM(visited, trackingLimit)
 
 	topStoriesFetcher := func(ctx context.Context, limit int) error {
-		defer log.Println("done top stories fetching") //good
 		eg, ctx := errgroup.WithContext(ctx)
 		for _, storiesURL := range storiesURLs {
 			storiesURL := storiesURL
@@ -141,7 +140,6 @@ func main() {
 	}
 
 	fetchItem := func(itemID int) (i item, err error) {
-		defer log.Println("done fetching item") //good
 		resp, err := http.Get(fmt.Sprintf(storyLink, itemID))
 		if err != nil {
 			return
@@ -159,7 +157,6 @@ func main() {
 	}
 
 	storyLister := func(ctx context.Context) error {
-		defer log.Println("done story listing") //good
 		for {
 			select {
 			case items := <-incomingItems:
@@ -199,24 +196,24 @@ func main() {
 	}
 
 	storyRemover := func(ctx context.Context) error {
-		log.Println("INNNNNNNNNNN")
-		defer log.Println("done story removing") //bad
+		log.Println("in story remover")
+		st.Lock()
+		defer st.Unlock()
 		for id, it := range st.list {
+			log.Println("looping")
 			if ctx.Err() != nil {
-				return fmt.Errorf("done story removing")
+				log.Println("ctx error")
+				return nil
 			}
-			log.Println("******************")
 			if time.Since(time.Unix(int64(it.Added), 0)).Seconds() > 8*60*60 {
-				st.Lock()
 				delete(st.list, id)
-				st.Unlock()
 			}
 		}
+		log.Println("done story removing") //good
 		return nil
 	}
 
 	listCounter := func() error {
-		defer log.Println("done listing counters") //good
 		st.Lock()
 		defer st.Unlock()
 		var ids []int
@@ -233,15 +230,13 @@ func main() {
 	}
 
 	errLogger := func(ctx context.Context) error {
-		defer log.Println("done err logging") // good
 		for ctx.Err() == nil {
-			log.Println("in err log")
 			err := <-errCh
 			if err != nil {
 				log.Println(err)
 			}
 		}
-		return fmt.Errorf("finished error logging")
+		return nil
 	}
 
 	visitCounterCh := make(chan int)
@@ -279,30 +274,12 @@ func main() {
 
 	fiveMinTicker := time.NewTicker(hnPollTime)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	eg, ctx := errgroup.WithContext(ctx)
+	appCtx, cancel := context.WithCancel(context.Background())
 
-	eg.Go(func() error {
-		log.Println("starting error logger")
-		return errLogger(ctx)
-	})
-	eg.Go(func() error {
-		log.Println("starting top stories fetcher")
-		return topStoriesFetcher(ctx, frontPageNumArticles)
-	})
-	eg.Go(func() error {
-		time.Sleep(1 * time.Minute)
-		return listCounter()
-	})
-	eg.Go(func() error {
-		log.Println("starting story lister")
-		return storyLister(ctx)
-	})
-	eg.Go(func() error {
-		for ctx.Err() == nil {
-			<-fiveMinTicker.C
+	go func() {
+		for range fiveMinTicker.C {
 			log.Println("starting ticker ticker")
-			eg, ctxi := errgroup.WithContext(ctx)
+			eg, ctxi := errgroup.WithContext(appCtx)
 			eg.Go(func() error {
 				log.Println("123456789012345678901234567890")
 				return nil
@@ -319,9 +296,23 @@ func main() {
 				log.Println("starting list counter")
 				return listCounter()
 			})
-			errCh <- eg.Wait()
+			log.Println(eg.Wait())
 		}
-		return nil
+	}()
+
+	eg, ctx := errgroup.WithContext(appCtx)
+
+	eg.Go(func() error {
+		log.Println("starting error logger")
+		return errLogger(ctx)
+	})
+	eg.Go(func() error {
+		log.Println("starting top stories fetcher")
+		return topStoriesFetcher(ctx, frontPageNumArticles)
+	})
+	eg.Go(func() error {
+		log.Println("starting story lister")
+		return storyLister(ctx)
 	})
 
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
@@ -332,14 +323,15 @@ func main() {
 		return srv.ListenAndServe()
 	})
 	eg.Go(func() error {
-		defer cancel()
-		defer fiveMinTicker.Stop()
-		defer close(errCh)
-		defer close(incomingItems)
-		defer close(visitCounterCh)
-
 		sig := <-stop
 		log.Printf("interrupted with signal %s, aborting\n", sig.String())
+
+		cancel()
+		fiveMinTicker.Stop()
+		close(errCh)
+		close(incomingItems)
+		close(visitCounterCh)
+
 		return srv.Shutdown(ctx)
 	})
 	eg.Go(visitCounter)
