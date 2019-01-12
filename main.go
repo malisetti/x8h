@@ -275,14 +275,14 @@ func main() {
 	go func() {
 		for range fiveMinTicker.C {
 			log.Println("starting ticker ticker")
-			eg, ctxi := errgroup.WithContext(appCtx)
+			eg, ctx := errgroup.WithContext(appCtx)
 			eg.Go(func() error {
 				log.Println("starting top stories fetcher")
-				return topStoriesFetcher(ctxi, frontPageNumArticles)
+				return topStoriesFetcher(ctx, frontPageNumArticles)
 			})
 			eg.Go(func() error {
 				log.Println("starting story remover")
-				return storyRemover(ctxi)
+				return storyRemover(ctx)
 			})
 			eg.Go(func() error {
 				log.Println("starting list counter")
@@ -310,32 +310,42 @@ func main() {
 		return storyLister(ctx)
 	})
 
-	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
-
-	eg.Go(func() error {
-		log.Println("starting http server on port 8080")
-
-		return srv.ListenAndServe()
-	})
-	eg.Go(func() error {
-		defer func() {
-			cancel()
-			fiveMinTicker.Stop()
-			close(incomingItems)
-			close(visitCounterCh)
-			close(errCh)
-		}()
-		sig := <-stop
-		log.Printf("interrupted with signal %s, aborting\n", sig.String())
-		return srv.Shutdown(ctx)
-	})
 	eg.Go(visitCounter)
 
-	err = eg.Wait()
-	if err != nil {
-		log.Println(err)
+	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
+
+	errors := make(chan error)
+	defer close(errors)
+
+	go func() {
+		log.Println("starting http server on port 8080")
+		errors <- srv.ListenAndServe()
+	}()
+
+	go func() {
+		sig := <-stop
+		errors <- fmt.Errorf("interrupted with signal %s, aborting", sig.String())
+	}()
+
+	go func() {
+		errors <- eg.Wait()
+	}()
+
+	err = <-errors
+	log.Println(err)
+
+	err = srv.Shutdown(ctx)
+	log.Println(err)
+
+	cleanup := func() {
+		cancel()
+		fiveMinTicker.Stop()
+		close(incomingItems)
+		close(visitCounterCh)
+		close(errCh)
 	}
 
-	cancel()
+	cleanup()
+
 	log.Println("END")
 }
