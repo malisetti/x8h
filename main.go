@@ -238,8 +238,16 @@ func main() {
 	listCounter := func() error {
 		st.Lock()
 		defer st.Unlock()
-		log.Println(st.list)
-		log.Println(visited)
+		var ids []int
+		for id := range st.list {
+			ids = append(ids, id)
+		}
+		log.Println(ids)
+		ids = ids[:0]
+		for id := range visited {
+			ids = append(ids, id)
+		}
+		log.Println(ids)
 		return nil
 	}
 
