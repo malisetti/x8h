@@ -1,0 +1,12 @@
+~/.config/systemd/user/8hrs.service
+
+[Unit]
+Description=8hrs daemon
+After=network.target
+
+[Service]
+ExecStart=/home/ubuntu/8hrs
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
