@@ -169,18 +169,16 @@ func main() {
 							if _, ok := st.list[itemID]; ok {
 								return
 							}
-
 							if lm.has(itemID) {
 								return
 							}
-
-							lm.insert(itemID)
-
 							item, err := fetchItem(itemID)
 							if err != nil {
 								errCh <- err
 								return
 							}
+
+							lm.insert(itemID)
 							item.Added = unixTime(time.Now().Unix())
 
 							st.Lock()
@@ -252,9 +250,13 @@ func main() {
 
 		st.Lock()
 		defer st.Unlock()
+		lm.Lock()
+		defer lm.Unlock()
+
 		data := make(map[string]interface{})
 		data["Data"] = st.list
 		data["VisitorNumber"] = visitCount
+		data["OrderOfKeys"] = lm.keys[len(lm.keys)-len(st.list):]
 		err = tmpl.Execute(w, data)
 		if err != nil {
 			errCh <- err
