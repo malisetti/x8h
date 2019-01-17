@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"time"
 
@@ -22,7 +23,7 @@ const (
 	hnPostLink           = "https://news.ycombinator.com/item?id=%d"
 	frontPageNumArticles = 30
 	hnPollTime           = 1 * time.Minute
-	port                 = 8080
+	defaultPort          = 8080
 )
 
 type limitMap struct {
@@ -82,6 +83,19 @@ type stories struct {
 }
 
 func main() {
+	var port int
+	// use PORT env else port
+	envPort := os.Getenv("PORT")
+	if envPort == "" {
+		port = defaultPort
+	} else {
+		var err error
+		port, err = strconv.Atoi(envPort)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	tmpl := template.New("index.html")
 	tmpl, err := tmpl.ParseFiles("./index.html")
 	if err != nil {
