@@ -250,13 +250,11 @@ func main() {
 
 		st.Lock()
 		defer st.Unlock()
-		lm.Lock()
-		defer lm.Unlock()
 
 		data := make(map[string]interface{})
 		data["Data"] = st.list
 		data["VisitorNumber"] = visitCount
-		data["OrderOfKeys"] = lm.keys[len(lm.keys)-len(st.list):]
+
 		err = tmpl.Execute(w, data)
 		if err != nil {
 			errCh <- err
