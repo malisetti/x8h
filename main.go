@@ -223,9 +223,8 @@ func main() {
 		return nil
 	}
 
-	errLogger := func(ctx context.Context) error {
-		for ctx.Err() == nil {
-			err := <-errCh
+	errLogger := func() error {
+		for err := range errCh {
 			if err != nil {
 				log.Println(err)
 			}
@@ -299,7 +298,7 @@ func main() {
 
 	eg.Go(func() error {
 		log.Println("starting error logger")
-		return errLogger(ctx)
+		return errLogger()
 	})
 	eg.Go(func() error {
 		log.Println("starting top stories fetcher")
@@ -333,6 +332,13 @@ func main() {
 
 	err = <-errors
 	log.Println(err)
+
+	// drain errors
+	go func() {
+		for err := range errors {
+			log.Println(err)
+		}
+	}()
 
 	err = srv.Shutdown(ctx)
 	log.Println(err)
