@@ -283,7 +283,26 @@ func main() {
 
 	fiveMinTicker := time.NewTicker(hnPollTime)
 
+	dynoSleepTime := 25 * time.Minute // dyno sleeps in 30 min of idle time
+	pinger := time.NewTicker(dynoSleepTime)
+
 	appCtx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		const urlToPing = "http://www.8hrs.xyz/"
+		for {
+			select {
+			case <-pinger.C:
+				log.Println("pinging 8hrs.xyz")
+				_, err := http.Get(urlToPing)
+				if err != nil {
+					errCh <- err
+				}
+			case <-appCtx.Done():
+				return
+			}
+		}
+	}()
 
 	go func() {
 		for range fiveMinTicker.C {
@@ -360,6 +379,7 @@ func main() {
 	cleanup := func() {
 		cancel()
 		fiveMinTicker.Stop()
+		pinger.Stop()
 		close(incomingItems)
 		close(visitCounterCh)
 		close(errCh)
