@@ -26,6 +26,13 @@ const (
 	defaultPort          = 8080
 )
 
+type changeAction string
+
+const (
+	changeAdd    changeAction = "added"
+	changeRemove              = "removed"
+)
+
 type limitMap struct {
 	sync.Mutex
 	keys []int
@@ -72,12 +79,22 @@ type itemList []int
 type unixTime int64
 
 type item struct {
+	ID      int    `json:"id"`
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Deleted bool   `json:"deleted"`
 	Dead    bool   `json:"dead"`
 
 	Added unixTime `json:"-"`
+}
+
+type change struct {
+	Action changeAction
+	Item   item
+}
+
+func (c change) String() string {
+	return fmt.Sprintf("%s : %d", c.Action, c.Item.ID)
 }
 
 type stories struct {
@@ -106,6 +123,7 @@ func main() {
 	}
 
 	errCh := make(chan error)
+	changeCh := make(chan change)
 
 	st := stories{
 		list: make(map[int]item),
@@ -201,6 +219,11 @@ func main() {
 							st.Lock()
 							defer st.Unlock()
 							st.list[itemID] = item
+							// send this to added chan
+							changeCh <- change{
+								Action: changeAdd,
+								Item:   item,
+							}
 						}()
 					}
 				}
@@ -218,25 +241,21 @@ func main() {
 				return nil
 			}
 			if time.Since(time.Unix(int64(it.Added), 0)).Seconds() > 8*60*60 {
+				// send these to removed chan
+				changeCh <- change{
+					Action: changeRemove,
+					Item:   st.list[id],
+				}
 				delete(st.list, id)
 			}
 		}
 		return nil
 	}
 
-	listCounter := func() error {
-		st.Lock()
-		defer st.Unlock()
-		var ids []int
-		for id := range st.list {
-			ids = append(ids, id)
+	changeLogger := func() error {
+		for c := range changeCh {
+			log.Println(c)
 		}
-		log.Println(ids)
-		ids = ids[:0]
-		for id := range visited {
-			ids = append(ids, id)
-		}
-		log.Println(ids)
 		return nil
 	}
 
@@ -300,10 +319,6 @@ func main() {
 				log.Println("starting story remover")
 				return storyRemover(ctx)
 			})
-			eg.Go(func() error {
-				log.Println("starting list counter")
-				return listCounter()
-			})
 			err := eg.Wait()
 			if err != nil {
 				errCh <- err
@@ -316,6 +331,10 @@ func main() {
 	eg.Go(func() error {
 		log.Println("starting error logger")
 		return errLogger()
+	})
+	eg.Go(func() error {
+		log.Println("starting change logger")
+		return changeLogger()
 	})
 	eg.Go(func() error {
 		log.Println("starting top stories fetcher")
@@ -365,6 +384,7 @@ func main() {
 		fiveMinTicker.Stop()
 		close(incomingItems)
 		close(visitCounterCh)
+		close(changeCh)
 		close(errCh)
 	}
 
