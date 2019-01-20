@@ -5,47 +5,52 @@
 </head>
 
 <body>
-  <h1>Top HN Posts - since last 8hrs</h1>
-  <ul>
-    {{ range $key, $item := .Data }}
-    <li>
-      {{ if $item.Deleted }}
-        <del>
-      {{ else if $item.Dead }}
-        <s>
-      {{ end }}
-          {{ if eq $item.URL "" }}
-          <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
-          {{ else }}
-          <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a><strong> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">-></a></strong>
+  <header>
+      <h1>Top HN Posts - since last 8hrs</h1>
+  </header>
+  
+  <main>
+      <ul>
+          {{ range $key, $item := .Data }}
+          <li>
+            {{ if $item.Deleted }}
+              <del>
+            {{ else if $item.Dead }}
+              <s>
+            {{ end }}
+                {{ if eq $item.URL "" }}
+                <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
+                {{ else }}
+                <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a><strong> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">-></a></strong>
+                {{ end }}
+            {{ if $item.Deleted }}
+              </del>
+            {{ else if $item.Dead }}
+              </s>
+            {{ end }}
+          </li>
           {{ end }}
-      {{ if $item.Deleted }}
-        </del>
-      {{ else if $item.Dead }}
-        </s>
-      {{ end }}
-    </li>
-    {{ end }}
-  </ul>
-</body>
+        </ul>
+  </main>
 
-<footer>
-  <table>
-    <tr>
-      <td>
-        Visits : {{ .VisitorNumber }} |
-      </td>
-      <td>
-        Links : {{ len .Data }} |
-      </td>
-      <td>
-        <a href="http://github.com/mseshachalam/HN-Posts-last-8hrs" target="_blank">Source</a> |
-      </td>
-      <td>
-        <a href="https://twitter.com/seshnsesh" target="_blank">Contact</a>
-      </td>
-    </tr>
-  </table>
-</footer>
+  <footer>
+    <table>
+      <tr>
+        <td>
+          Visits : {{ .VisitorNumber }} |
+        </td>
+        <td>
+          Links : {{ len .Data }} |
+        </td>
+        <td>
+          <a href="http://github.com/mseshachalam/HN-Posts-last-8hrs" target="_blank">Source</a> |
+        </td>
+        <td>
+          <a href="https://twitter.com/seshnsesh" target="_blank">Contact</a>
+        </td>
+      </tr>
+    </table>
+  </footer>
+</body>
 
 </html>
