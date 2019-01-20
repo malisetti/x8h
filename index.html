@@ -9,11 +9,21 @@
   <ul>
     {{ range $key, $item := .Data }}
     <li>
-      {{ if eq $item.URL "" }}
-      <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
-      {{else}}
-      <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a><strong> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">-></a></strong>
-      {{end}}
+      {{ if $item.Deleted }}
+        <del>
+      {{ else if $item.Dead }}
+        <s>
+      {{ end }}
+          {{ if eq $item.URL "" }}
+          <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
+          {{ else }}
+          <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a><strong> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">-></a></strong>
+          {{ end }}
+      {{ if $item.Deleted }}
+        </del>
+      {{ else if $item.Dead }}
+        </s>
+      {{ end }}
     </li>
     {{ end }}
   </ul>
@@ -23,13 +33,16 @@
   <table>
     <tr>
       <td>
-          Visits : {{ .VisitorNumber }} |
+        Visits : {{ .VisitorNumber }} |
       </td>
       <td>
-          <a href="http://github.com/mseshachalam/HN-Posts-last-8hrs" target="_blank">Source</a> |
+        Links : {{ len .Data }} |
       </td>
       <td>
-          <a href="https://twitter.com/seshnsesh" target="_blank">Contact</a>
+        <a href="http://github.com/mseshachalam/HN-Posts-last-8hrs" target="_blank">Source</a> |
+      </td>
+      <td>
+        <a href="https://twitter.com/seshnsesh" target="_blank">Contact</a>
       </td>
     </tr>
   </table>

@@ -72,8 +72,11 @@ type itemList []int
 type unixTime int64
 
 type item struct {
-	Title string   `json:"title"`
-	URL   string   `json:"url"`
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Deleted bool   `json:"deleted"`
+	Dead    bool   `json:"dead"`
+
 	Added unixTime `json:"-"`
 }
 
