@@ -13,6 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ulule/limiter/v3"
+	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
+	sim "github.com/ulule/limiter/v3/drivers/store/memory"
+
 	"golang.org/x/sync/errgroup"
 )
 
@@ -24,6 +28,9 @@ const (
 	frontPageNumArticles = 30
 	hnPollTime           = 1 * time.Minute
 	defaultPort          = 8080
+
+	rateLimit          = "5-M"
+	humanTrackingLimit = 300
 )
 
 type changeAction string
@@ -64,7 +71,7 @@ func (lm *limitMap) has(k int) bool {
 
 func newLM(m map[int]struct{}, l int) *limitMap {
 	keys := []int{}
-	for k, _ := range m {
+	for k := range m {
 		keys = append(keys, k)
 	}
 	return &limitMap{
@@ -122,6 +129,15 @@ func main() {
 		panic(err)
 	}
 
+	store := sim.NewStore()
+	// Define a limit rate to 5 requests per minute.
+	rate, err := limiter.NewRateFromFormatted(rateLimit)
+	if err != nil {
+		panic(err)
+	}
+
+	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
+
 	errCh := make(chan error)
 	changeCh := make(chan change)
 
@@ -132,9 +148,8 @@ func main() {
 	storiesURLs := []string{topStories}
 	incomingItems := make(chan itemList)
 
-	const trackingLimit = 2000
 	visited := make(map[int]struct{})
-	lm := newLM(visited, trackingLimit)
+	lm := newLM(visited, humanTrackingLimit)
 
 	topStoriesFetcher := func(ctx context.Context, limit int) error {
 		eg, ctx := errgroup.WithContext(ctx)
@@ -278,7 +293,7 @@ func main() {
 		return nil
 	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			visitCounterCh <- 1
 		}()
@@ -295,7 +310,7 @@ func main() {
 			errCh <- err
 		}
 		return
-	})
+	})))
 
 	log.Println("START")
 	log.Println("starting the app")
