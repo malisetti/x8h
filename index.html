@@ -5,6 +5,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Top HN Posts - since last 8hrs</title>
+  <style>
+    #footer-info li{
+      display: inline;
+    }
+  </style>
 </head>
 
 <body>
@@ -37,22 +42,12 @@
   </main>
 
   <footer>
-    <table>
-      <tr>
-        <td>
-          Visits : {{ .VisitorNumber }} |
-        </td>
-        <td>
-          Links : {{ len .Data }} |
-        </td>
-        <td>
-          <a href="http://github.com/mseshachalam/HN-Posts-last-8hrs" target="_blank">Source</a> |
-        </td>
-        <td>
-          <a href="https://twitter.com/seshnsesh" target="_blank">Contact</a>
-        </td>
-      </tr>
-    </table>
+    <ul id="footer-info">
+      <li>Visits : {{ .VisitorNumber }} |</li>
+      <li>Links : {{ len .Data }} |</li>
+      <li><a href="http://github.com/mseshachalam/HN-Posts-last-8hrs" target="_blank">Source</a> |</li>
+      <li><a href="https://twitter.com/seshnsesh" target="_blank">Contact</a></li>
+    </ul>
   </footer>
 </body>
 
