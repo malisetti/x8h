@@ -10,6 +10,9 @@
       display: inline;
     }
   </style>
+
+<link rel="stylesheet" href="https://raw.githubusercontent.com/vasanthv/stylize.css/master/stylize.min.css" />
+
 </head>
 
 <body>
@@ -27,9 +30,9 @@
               <s>
             {{ end }}
                 {{ if eq $item.URL "" }}
-                <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a></strong>
+                <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a>
                 {{ else }}
-                <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a><strong> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">-></a></strong>
+                <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }}</a> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}"><i>discuss</i></a>
                 {{ end }}
             {{ if $item.Deleted }}
               </del>

@@ -1,5 +1,5 @@
 # HN-Posts-last-8hrs
 
-go build -o hn
-./hn
-visit http://localhost:8080
+1. `go build -o hn`
+2. `./hn`
+3. visit `http://localhost:8080`
