@@ -112,6 +112,8 @@ type stories struct {
 	list map[int]item
 }
 
+var version string
+
 func main() {
 	var port int
 	// use PORT env else port
@@ -333,6 +335,7 @@ func main() {
 		data := make(map[string]interface{})
 		data["Data"] = st.list
 		data["VisitorNumber"] = visitCount
+		data["Version"] = version
 
 		err = tmpl.Execute(w, data)
 		if err != nil {
