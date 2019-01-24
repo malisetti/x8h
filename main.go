@@ -7,11 +7,17 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/ulule/limiter/v3"
+	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
+	sim "github.com/ulule/limiter/v3/drivers/store/memory"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -88,7 +94,8 @@ type item struct {
 	Deleted bool   `json:"deleted"`
 	Dead    bool   `json:"dead"`
 
-	Added unixTime `json:"-"`
+	Added  unixTime `json:"-"`
+	Domain string   `json:"-"`
 }
 
 type change struct {
@@ -130,6 +137,15 @@ func main() {
 		panic(err)
 	}
 
+	store := sim.NewStore()
+	// Define a limit rate to 5 requests per minute.
+	rate, err := limiter.NewRateFromFormatted(rateLimit)
+	if err != nil {
+		panic(err)
+	}
+
+	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
+
 	errCh := make(chan error)
 	changeCh := make(chan change)
 
@@ -142,6 +158,21 @@ func main() {
 
 	visited := make(map[int]struct{})
 	lm := newLM(visited, humanTrackingLimit)
+
+	r := strings.NewReplacer("http://", "", "https://", "", "www.", "", "www2.", "", "www3.", "")
+	urlToDomain := func(link string) (string, error) {
+		u, err := url.Parse(link)
+		if err != nil {
+			return "", err
+		}
+		parts := strings.Split(u.Hostname(), ".")
+		if len(parts) >= 2 {
+			domain := parts[len(parts)-2] + "." + parts[len(parts)-1]
+			return domain, nil
+		}
+
+		return r.Replace(u.Hostname()), nil
+	}
 
 	topStoriesFetcher := func(ctx context.Context, limit int) error {
 		eg, ctx := errgroup.WithContext(ctx)
@@ -222,6 +253,12 @@ func main() {
 
 							lm.insert(itemID)
 							item.Added = unixTime(time.Now().Unix())
+							domain, err := urlToDomain(item.URL)
+							if err == nil {
+								item.Domain = domain
+							} else {
+								errCh <- err
+							}
 
 							st.Lock()
 							defer st.Unlock()
@@ -285,7 +322,7 @@ func main() {
 		return nil
 	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			visitCounterCh <- 1
 		}()
@@ -302,7 +339,7 @@ func main() {
 			errCh <- err
 		}
 		return
-	})
+	})))
 
 	log.Println("START")
 	log.Println("starting the app")
