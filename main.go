@@ -121,7 +121,7 @@ func main() {
 
 	templateFile := os.Getenv("TMPL_PATH")
 	if templateFile == "" {
-		panic("TMPL_PATH should be set to absolute path of index.html")
+		templateFile = "./index.html"
 	}
 
 	tmpl := template.New("index.html")
