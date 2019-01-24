@@ -13,10 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ulule/limiter/v3"
-	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
-	sim "github.com/ulule/limiter/v3/drivers/store/memory"
-
 	"golang.org/x/sync/errgroup"
 )
 
@@ -133,15 +129,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	store := sim.NewStore()
-	// Define a limit rate to 5 requests per minute.
-	rate, err := limiter.NewRateFromFormatted(rateLimit)
-	if err != nil {
-		panic(err)
-	}
-
-	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
 
 	errCh := make(chan error)
 	changeCh := make(chan change)
@@ -298,7 +285,7 @@ func main() {
 		return nil
 	}
 
-	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			visitCounterCh <- 1
 		}()
@@ -315,7 +302,7 @@ func main() {
 			errCh <- err
 		}
 		return
-	})))
+	})
 
 	log.Println("START")
 	log.Println("starting the app")
