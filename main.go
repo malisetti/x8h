@@ -123,8 +123,13 @@ func main() {
 		}
 	}
 
+	templateFile := os.Getenv("TMPL_PATH")
+	if templateFile == "" {
+		panic("TMPL_PATH should be set to absolute path of index.html")
+	}
+
 	tmpl := template.New("index.html")
-	tmpl, err := tmpl.ParseFiles("./index.html")
+	tmpl, err := tmpl.ParseFiles(templateFile)
 	if err != nil {
 		panic(err)
 	}
@@ -368,7 +373,7 @@ func main() {
 	defer close(errors)
 
 	go func() {
-		log.Println("starting http server on port 8080")
+		log.Printf("starting http server on port %d", port)
 		errors <- srv.ListenAndServe()
 	}()
 
