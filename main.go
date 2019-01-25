@@ -19,7 +19,6 @@ import (
 	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
 	sim "github.com/ulule/limiter/v3/drivers/store/memory"
 
-	"github.com/seiflotfy/cuckoofilter"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -33,7 +32,7 @@ const (
 	defaultPort          = 8080
 
 	rateLimit          = "5-M"
-	humanTrackingLimit = 30
+	humanTrackingLimit = 100
 )
 
 type changeAction string
@@ -222,7 +221,7 @@ func main() {
 	}
 
 	storyLister := func(ctx context.Context) error {
-		cf := cuckoo.NewFilter(humanTrackingLimit)
+		lookup := make(map[int]struct{})
 		var idHolder []int
 		for {
 			select {
@@ -233,13 +232,6 @@ func main() {
 						return nil
 					default:
 						func() {
-							if _, ok := st.list[itemID]; ok {
-								return
-							}
-							itemIDBytes := []byte(strconv.Itoa(itemID))
-							if cf.Lookup(itemIDBytes) {
-								return
-							}
 							item, err := fetchItem(itemID)
 							if err != nil {
 								errCh <- err
@@ -247,23 +239,10 @@ func main() {
 							}
 
 							idHolder = append(idHolder, itemID)
-
-							if !cf.Insert(itemIDBytes) {
-								if cf.Delete([]byte(strconv.Itoa(idHolder[0]))) {
-									idHolder = idHolder[1:]
-									errCh <- appErr{
-										err:   fmt.Errorf("deleted %d from cuckoo filter", idHolder[0]),
-										level: logInfo,
-									}
-								}
-
-								if !cf.Insert(itemIDBytes) {
-									errCh <- appErr{
-										err:   fmt.Errorf("cuckoo insert failed for key %d", itemID),
-										level: logFatal,
-									}
-									return
-								}
+							lookup[itemID] = struct{}{}
+							if len(lookup) >= humanTrackingLimit {
+								delete(lookup, idHolder[0])
+								idHolder = idHolder[1:]
 							}
 
 							item.Added = unixTime(time.Now().Unix())
