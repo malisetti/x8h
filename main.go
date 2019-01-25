@@ -139,7 +139,6 @@ func main() {
 		list: make(map[int]item),
 	}
 
-	storiesURLs := []string{topStories}
 	incomingItems := make(chan itemList)
 
 	r := strings.NewReplacer("http://", "", "https://", "", "www.", "", "www2.", "", "www3.", "")
@@ -157,53 +156,41 @@ func main() {
 		return r.Replace(u.Hostname()), nil
 	}
 
-	topStoriesFetcher := func(ctx context.Context, limit int) error {
-		eg, ctx := errgroup.WithContext(ctx)
-		for _, storiesURL := range storiesURLs {
-			storiesURL := storiesURL
-			eg.Go(func() error {
-				fetchStories := func(limit int) ([]int, error) {
-					resp, err := http.Get(storiesURL)
-					if err != nil {
-						return nil, appErr{
-							err:   err,
-							level: logWarning,
-						}
-					}
-
-					defer resp.Body.Close()
-
-					decoder := json.NewDecoder(resp.Body)
-					var items itemList
-					err = decoder.Decode(&items)
-					if err != nil {
-						return nil, appErr{
-							err:   err,
-							level: logWarning,
-						}
-					}
-					if len(items) < limit {
-						limit = len(items)
-					}
-					return items[:limit], nil
-				}
-
-				// send items
-				items, err := fetchStories(limit)
-				if err != nil {
-					return appErr{
-						err:   err,
-						level: logWarning,
-					}
-				}
-				if appCtx.Err() == nil {
-					incomingItems <- items
-				}
-				return nil
-			})
+	fetchTopStories := func(ctx context.Context, limit int) ([]int, error) {
+		req, err := http.NewRequest(http.MethodGet, topStories, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+		if err != nil {
+			return nil, err
 		}
 
-		return eg.Wait()
+		defer resp.Body.Close()
+
+		decoder := json.NewDecoder(resp.Body)
+		var items itemList
+		err = decoder.Decode(&items)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) < limit {
+			limit = len(items)
+		}
+
+		return items[:limit], nil
+	}
+
+	topStoriesFetcher := func(ctx context.Context, limit int) error {
+		// send items
+		items, err := fetchTopStories(ctx, limit)
+		if err != nil {
+			return err
+		}
+		if appCtx.Err() == nil {
+			incomingItems <- items
+		}
+		return nil
 	}
 
 	fetchItem := func(ctx context.Context, itemID int) (i item, err error) {
@@ -281,9 +268,24 @@ func main() {
 	}
 
 	storyRemover := func(ctx context.Context) error {
+		topItems, err := fetchTopStories(ctx, frontPageNumArticles)
+		if err != nil {
+			return err
+		}
+
 		st.Lock()
 		defer st.Unlock()
 		for id, it := range st.list {
+			stillAtTop := false
+			for _, tid := range topItems {
+				if tid == id {
+					stillAtTop = true
+					break
+				}
+			}
+			if stillAtTop {
+				continue
+			}
 			if ctx.Err() != nil {
 				return nil
 			}
