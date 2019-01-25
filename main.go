@@ -32,7 +32,7 @@ const (
 	defaultPort          = 8080
 
 	rateLimit          = "5-M"
-	humanTrackingLimit = 100
+	humanTrackingLimit = 300
 )
 
 type changeAction string
@@ -89,6 +89,11 @@ type stories struct {
 	list map[int]item
 }
 
+type adder struct {
+	sync.Mutex
+	count int
+}
+
 var version string
 
 func main() {
@@ -126,10 +131,8 @@ func main() {
 	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
 
 	appCtx, cancel := context.WithCancel(context.Background())
-	errors := make(chan error)
-	defer close(errors)
 
-	errCh := make(chan error)
+	errCh := make(chan appErr)
 	changeCh := make(chan change)
 
 	st := stories{
@@ -203,8 +206,12 @@ func main() {
 		return eg.Wait()
 	}
 
-	fetchItem := func(itemID int) (i item, err error) {
-		resp, err := http.Get(fmt.Sprintf(storyLink, itemID))
+	fetchItem := func(ctx context.Context, itemID int) (i item, err error) {
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf(storyLink, itemID), nil)
+		if err != nil {
+			return
+		}
+		resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 		if err != nil {
 			return
 		}
@@ -232,9 +239,12 @@ func main() {
 						return nil
 					default:
 						func() {
-							item, err := fetchItem(itemID)
+							if _, ok := lookup[itemID]; ok {
+								return
+							}
+							item, err := fetchItem(ctx, itemID)
 							if err != nil {
-								errCh <- err
+								log.Println(err)
 								return
 							}
 
@@ -250,7 +260,7 @@ func main() {
 							if err == nil {
 								item.Domain = domain
 							} else {
-								errCh <- err
+								log.Println(err)
 							}
 
 							st.Lock()
@@ -297,32 +307,28 @@ func main() {
 	}
 
 	errLogger := func() error {
-		for err := range errCh {
-			if err != nil {
-				switch e := err.(type) {
-				case appErr:
-					if e.level == logFatal {
-						log.Println("something fatal happend, initiating shutdown")
-						if appCtx.Err() == nil {
-							errors <- e.err
-						}
-					} else {
-						log.Println(e)
-					}
-				default:
-					log.Println(e)
+		for {
+			select {
+			case err := <-errCh:
+				if err.level == logFatal {
+					return err
 				}
+				log.Println(err)
+
+			case <-appCtx.Done():
+				return nil
 			}
 		}
-		return nil
 	}
 
 	visitCounterCh := make(chan int)
+	var visitCount adder
 
-	var visitCount int
 	visitCounter := func() error {
 		for c := range visitCounterCh {
-			visitCount += c
+			visitCount.Lock()
+			visitCount.count += c
+			visitCount.Unlock()
 		}
 		return nil
 	}
@@ -337,7 +343,11 @@ func main() {
 
 		data := make(map[string]interface{})
 		data["Data"] = st.list
-		data["VisitorNumber"] = visitCount
+
+		visitCount.Lock()
+		data["Visits"] = visitCount.count
+		visitCount.Unlock()
+
 		data["Version"] = version
 
 		err = tmpl.Execute(w, data)
@@ -356,10 +366,10 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, os.Kill)
 
-	fiveMinTicker := time.NewTicker(hnPollTime)
+	intervalTicker := time.NewTicker(hnPollTime)
 
 	go func() {
-		for range fiveMinTicker.C {
+		for range intervalTicker.C {
 			log.Println("starting ticker ticker")
 			eg, ctx := errgroup.WithContext(appCtx)
 			eg.Go(func() error {
@@ -372,7 +382,10 @@ func main() {
 			})
 			err := eg.Wait()
 			if err != nil {
-				errCh <- err
+				errCh <- appErr{
+					err:   err,
+					level: logFatal,
+				}
 			}
 		}
 	}()
@@ -400,39 +413,58 @@ func main() {
 
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
 
-	go func() {
-		log.Printf("starting http server on port %d", port)
-		errors <- srv.ListenAndServe()
-	}()
+	errors := make(chan error)
+	defer close(errors)
 
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
-		sig := <-stop
-		errors <- appErr{
-			err:   fmt.Errorf("interrupted with signal %s, aborting", sig.String()),
-			level: logFatal,
+		defer log.Println("done with signal")
+		defer wg.Done()
+		for appCtx.Err() == nil {
+			sig := <-stop
+			errors <- appErr{
+				err:   fmt.Errorf("interrupted with signal %s, aborting", sig.String()),
+				level: logFatal,
+			}
+			return
 		}
 	}()
 
+	wg.Add(1)
 	go func() {
-		errors <- eg.Wait()
-	}()
-
-	err = <-errors
-	log.Println(err)
-
-	// drain errors
-	go func() {
-		for err := range errors {
+		defer log.Println("done with server")
+		defer wg.Done()
+		err := srv.ListenAndServe()
+		if err == http.ErrServerClosed {
 			log.Println(err)
+		} else {
+			errors <- err
 		}
 	}()
+
+	wg.Add(1)
+	go func() {
+		defer log.Println("done with others")
+		defer wg.Done()
+		err = eg.Wait()
+		if err != nil {
+			errors <- err
+		}
+	}()
+
+	log.Println(<-errors)
 
 	err = srv.Shutdown(ctx)
-	log.Println(err)
+	if err != nil {
+		log.Println(err)
+	}
 
 	cleanup := func() {
+		log.Println("clean up")
 		cancel()
-		fiveMinTicker.Stop()
+		intervalTicker.Stop()
 		close(incomingItems)
 		close(visitCounterCh)
 		close(changeCh)
@@ -440,6 +472,9 @@ func main() {
 	}
 
 	cleanup()
+	log.Println("clean up done")
+
+	wg.Wait()
 
 	log.Println("END")
 }
