@@ -422,13 +422,17 @@ func main() {
 	go func() {
 		defer log.Println("done with signal")
 		defer wg.Done()
-		for appCtx.Err() == nil {
-			sig := <-stop
-			errors <- appErr{
-				err:   fmt.Errorf("interrupted with signal %s, aborting", sig.String()),
-				level: logFatal,
+		for {
+			select {
+			case <-appCtx.Done():
+				return
+			case sig := <-stop:
+				errors <- appErr{
+					err:   fmt.Errorf("interrupted with signal %s, aborting", sig.String()),
+					level: logFatal,
+				}
+				return
 			}
-			return
 		}
 	}()
 
