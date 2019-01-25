@@ -321,23 +321,9 @@ func main() {
 		}
 	}
 
-	visitCounterCh := make(chan int)
 	var visitCount adder
 
-	visitCounter := func() error {
-		for c := range visitCounterCh {
-			visitCount.Lock()
-			visitCount.count += c
-			visitCount.Unlock()
-		}
-		return nil
-	}
-
 	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			visitCounterCh <- 1
-		}()
-
 		st.Lock()
 		defer st.Unlock()
 
@@ -345,9 +331,11 @@ func main() {
 		data["Data"] = st.list
 
 		visitCount.Lock()
-		data["Visits"] = visitCount.count
-		visitCount.Unlock()
+		defer visitCount.Unlock()
 
+		visitCount.count++
+
+		data["Visits"] = visitCount.count
 		data["Version"] = version
 
 		err = tmpl.Execute(w, data)
@@ -409,8 +397,6 @@ func main() {
 		return storyLister(ctx)
 	})
 
-	eg.Go(visitCounter)
-
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
 
 	errors := make(chan error)
@@ -470,7 +456,6 @@ func main() {
 		cancel()
 		intervalTicker.Stop()
 		close(incomingItems)
-		close(visitCounterCh)
 		close(changeCh)
 		close(errCh)
 	}
