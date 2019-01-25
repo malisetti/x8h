@@ -19,6 +19,7 @@ import (
 	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
 	sim "github.com/ulule/limiter/v3/drivers/store/memory"
 
+	"github.com/seiflotfy/cuckoofilter"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -32,7 +33,7 @@ const (
 	defaultPort          = 8080
 
 	rateLimit          = "5-M"
-	humanTrackingLimit = 300
+	humanTrackingLimit = 30
 )
 
 type changeAction string
@@ -42,45 +43,22 @@ const (
 	changeRemove              = "removed"
 )
 
-type limitMap struct {
-	sync.Mutex
-	keys []int
-	m    map[int]struct{}
-	l    int
+type logLevel string
+
+const (
+	logInfo    logLevel = "info"
+	logWarning          = "warning"
+	logDebug            = "debug"
+	logFatal            = "fatal"
+)
+
+type appErr struct {
+	err   error
+	level logLevel
 }
 
-func (lm *limitMap) insert(k int) {
-	lm.Lock()
-	defer lm.Unlock()
-
-	lm.m[k] = struct{}{}
-	lm.keys = append(lm.keys, k)
-
-	if len(lm.keys) >= lm.l {
-		delete(lm.m, lm.keys[0])
-		lm.keys = lm.keys[1:]
-	}
-}
-
-func (lm *limitMap) has(k int) bool {
-	lm.Lock()
-	defer lm.Unlock()
-
-	_, ok := lm.m[k]
-
-	return ok
-}
-
-func newLM(m map[int]struct{}, l int) *limitMap {
-	keys := []int{}
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return &limitMap{
-		keys: keys,
-		m:    m,
-		l:    l,
-	}
+func (ae appErr) Error() string {
+	return fmt.Sprintf("occured: %v with level: %s", ae.err, ae.level)
 }
 
 type itemList []int
@@ -148,6 +126,10 @@ func main() {
 
 	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
 
+	appCtx, cancel := context.WithCancel(context.Background())
+	errors := make(chan error)
+	defer close(errors)
+
 	errCh := make(chan error)
 	changeCh := make(chan change)
 
@@ -157,9 +139,6 @@ func main() {
 
 	storiesURLs := []string{topStories}
 	incomingItems := make(chan itemList)
-
-	visited := make(map[int]struct{})
-	lm := newLM(visited, humanTrackingLimit)
 
 	r := strings.NewReplacer("http://", "", "https://", "", "www.", "", "www2.", "", "www3.", "")
 	urlToDomain := func(link string) (string, error) {
@@ -184,7 +163,10 @@ func main() {
 				fetchStories := func(limit int) ([]int, error) {
 					resp, err := http.Get(storiesURL)
 					if err != nil {
-						return nil, err
+						return nil, appErr{
+							err:   err,
+							level: logWarning,
+						}
 					}
 
 					defer resp.Body.Close()
@@ -193,7 +175,10 @@ func main() {
 					var items itemList
 					err = decoder.Decode(&items)
 					if err != nil {
-						return nil, err
+						return nil, appErr{
+							err:   err,
+							level: logWarning,
+						}
 					}
 					if len(items) < limit {
 						limit = len(items)
@@ -204,9 +189,14 @@ func main() {
 				// send items
 				items, err := fetchStories(limit)
 				if err != nil {
-					return err
+					return appErr{
+						err:   err,
+						level: logWarning,
+					}
 				}
-				incomingItems <- items
+				if appCtx.Err() == nil {
+					incomingItems <- items
+				}
 				return nil
 			})
 		}
@@ -232,6 +222,8 @@ func main() {
 	}
 
 	storyLister := func(ctx context.Context) error {
+		cf := cuckoo.NewFilter(humanTrackingLimit)
+		var idHolder []int
 		for {
 			select {
 			case items := <-incomingItems:
@@ -244,7 +236,8 @@ func main() {
 							if _, ok := st.list[itemID]; ok {
 								return
 							}
-							if lm.has(itemID) {
+							itemIDBytes := []byte(strconv.Itoa(itemID))
+							if cf.Lookup(itemIDBytes) {
 								return
 							}
 							item, err := fetchItem(itemID)
@@ -253,7 +246,26 @@ func main() {
 								return
 							}
 
-							lm.insert(itemID)
+							idHolder = append(idHolder, itemID)
+
+							if !cf.Insert(itemIDBytes) {
+								if cf.Delete([]byte(strconv.Itoa(idHolder[0]))) {
+									idHolder = idHolder[1:]
+									errCh <- appErr{
+										err:   fmt.Errorf("deleted %d from cuckoo filter", idHolder[0]),
+										level: logInfo,
+									}
+								}
+
+								if !cf.Insert(itemIDBytes) {
+									errCh <- appErr{
+										err:   fmt.Errorf("cuckoo insert failed for key %d", itemID),
+										level: logFatal,
+									}
+									return
+								}
+							}
+
 							item.Added = unixTime(time.Now().Unix())
 							domain, err := urlToDomain(item.URL)
 							if err == nil {
@@ -308,7 +320,19 @@ func main() {
 	errLogger := func() error {
 		for err := range errCh {
 			if err != nil {
-				log.Println(err)
+				switch e := err.(type) {
+				case appErr:
+					if e.level == logFatal {
+						log.Println("something fatal happend, initiating shutdown")
+						if appCtx.Err() == nil {
+							errors <- e.err
+						}
+					} else {
+						log.Println(e)
+					}
+				default:
+					log.Println(e)
+				}
 			}
 		}
 		return nil
@@ -339,7 +363,10 @@ func main() {
 
 		err = tmpl.Execute(w, data)
 		if err != nil {
-			errCh <- err
+			errCh <- appErr{
+				err:   err,
+				level: logFatal,
+			}
 		}
 		return
 	})))
@@ -349,8 +376,6 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, os.Kill)
-
-	appCtx, cancel := context.WithCancel(context.Background())
 
 	fiveMinTicker := time.NewTicker(hnPollTime)
 
@@ -396,9 +421,6 @@ func main() {
 
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
 
-	errors := make(chan error)
-	defer close(errors)
-
 	go func() {
 		log.Printf("starting http server on port %d", port)
 		errors <- srv.ListenAndServe()
@@ -406,7 +428,10 @@ func main() {
 
 	go func() {
 		sig := <-stop
-		errors <- fmt.Errorf("interrupted with signal %s, aborting", sig.String())
+		errors <- appErr{
+			err:   fmt.Errorf("interrupted with signal %s, aborting", sig.String()),
+			level: logFatal,
+		}
 	}()
 
 	go func() {
