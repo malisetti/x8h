@@ -276,6 +276,10 @@ func main() {
 		st.Lock()
 		defer st.Unlock()
 		for id, it := range st.list {
+			if ctx.Err() != nil {
+				return nil
+			}
+
 			stillAtTop := false
 			for _, tid := range topItems {
 				if tid == id {
@@ -283,13 +287,8 @@ func main() {
 					break
 				}
 			}
-			if stillAtTop {
-				continue
-			}
-			if ctx.Err() != nil {
-				return nil
-			}
-			if time.Since(time.Unix(int64(it.Added), 0)).Seconds() > 8*60*60 {
+
+			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)).Seconds() > 8*60*60 {
 				// send these to removed chan
 				changeCh <- change{
 					Action: changeRemove,
