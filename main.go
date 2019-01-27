@@ -266,10 +266,6 @@ func main() {
 				app.Lock()
 				defer app.Unlock()
 
-				if _, ok := app.lq.store[item.ID]; ok {
-					return
-				}
-
 				if item.Added == 0 {
 					item.Added = unixTime(time.Now().Unix())
 				}
