@@ -10,6 +10,7 @@ type item struct {
 	From     string `json:"from"`
 	Priority int    `json:"priority"`
 
-	Added  unixTime `json:"added"`
-	Domain string   `json:"domain"`
+	Added    unixTime `json:"added"`
+	RemoveAt unixTime `json:"removeAt"`
+	Domain   string   `json:"domain"`
 }

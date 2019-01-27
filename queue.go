@@ -8,6 +8,10 @@ type limitQueue struct {
 
 func (lm *limitQueue) add(i item) error {
 	lm.keys = append(lm.keys, i.ID)
+	if len(lm.store) >= lm.limit {
+		lm.remove(lm.keys[0])
+		lm.keys = lm.keys[1:]
+	}
 	lm.store[i.ID] = i
 	return nil
 }

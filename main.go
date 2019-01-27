@@ -35,7 +35,9 @@ const (
 	defaultPort          = 8080
 
 	rateLimit          = "5-M"
+	eightHrs           = 8 * 60 * 60
 	humanTrackingLimit = 300
+	itemFromFile       = "file"
 )
 
 type changeAction string
@@ -74,11 +76,6 @@ type change struct {
 
 func (c change) String() string {
 	return fmt.Sprintf("%s : %d", c.Action, c.Item.ID)
-}
-
-type stories struct {
-	sync.Mutex
-	list map[int]item
 }
 
 type adder struct {
@@ -202,7 +199,7 @@ func main() {
 		}
 		for _, it := range items {
 			if it.From == "" {
-				it.From = "file"
+				it.From = itemFromFile
 			}
 
 			incomingItems <- it
@@ -254,7 +251,7 @@ func main() {
 		return nil
 	}
 
-	storyLister := func(ctx context.Context) error {
+	storyLister := func(ctx context.Context) {
 		for item := range incomingItems {
 			func() {
 				app.Lock()
@@ -281,8 +278,6 @@ func main() {
 						Action: changeRemove,
 						Item:   item,
 					}
-					app.lq.remove(app.lq.keys[0])
-					app.lq.keys = app.lq.keys[1:]
 				}
 
 				err = app.lq.add(item)
@@ -297,8 +292,6 @@ func main() {
 
 			}()
 		}
-
-		return nil
 	}
 
 	storyRemover := func(ctx context.Context) error {
@@ -321,7 +314,7 @@ func main() {
 
 			stillAtTop := false
 			switch it.From {
-			case "file":
+			case itemFromFile:
 				for _, it := range fileItems {
 					if id == it.ID {
 						stillAtTop = true
@@ -338,7 +331,7 @@ func main() {
 				}
 			}
 
-			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)).Seconds() > 8*60*60 {
+			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)).Seconds() > eightHrs {
 				// send these to removed chan
 				changeCh <- change{
 					Action: changeRemove,
@@ -350,25 +343,15 @@ func main() {
 		return nil
 	}
 
-	changeLogger := func() error {
+	changeLogger := func() {
 		for c := range changeCh {
 			log.Println(c)
 		}
-		return nil
 	}
 
-	errLogger := func() error {
-		for {
-			select {
-			case err := <-errCh:
-				if err.level == logFatal {
-					return err
-				}
-				log.Println(err)
-
-			case <-appCtx.Done():
-				return nil
-			}
+	errLogger := func() {
+		for err := range errCh {
+			log.Println(err)
 		}
 	}
 
@@ -427,91 +410,47 @@ func main() {
 			if err != nil {
 				errCh <- appErr{
 					err:   err,
-					level: logFatal,
+					level: logWarning,
 				}
 			}
 		}
 	}()
 
-	eg, ctx := errgroup.WithContext(appCtx)
+	log.Println("starting error logger")
+	go errLogger()
 
-	eg.Go(func() error {
-		log.Println("starting error logger")
-		return errLogger()
-	})
-	eg.Go(func() error {
-		log.Println("starting change logger")
-		return changeLogger()
-	})
-	eg.Go(func() error {
-		log.Println("starting top stories fetcher")
-		return topStoriesFetcher(ctx, frontPageNumArticles)
-	})
-	eg.Go(func() error {
-		log.Println("starting file stories fetcher")
-		return serverInputsToUserFetcher(ctx, inputFilePath)
-	})
-	eg.Go(func() error {
-		log.Println("starting story lister")
-		return storyLister(ctx)
-	})
+	log.Println("starting change logger")
+	go changeLogger()
+
+	log.Println("starting top stories fetcher")
+	go topStoriesFetcher(appCtx, frontPageNumArticles)
+
+	go func() {
+		err := serverInputsToUserFetcher(appCtx, inputFilePath)
+		if err != nil {
+			log.Println(err)
+		}
+	}()
+
+	log.Println("starting story lister")
+	go storyLister(appCtx)
 
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
 
-	errors := make(chan error)
-	defer close(errors)
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
 	go func() {
-		defer log.Println("done with signal")
-		defer wg.Done()
-		for {
-			select {
-			case <-appCtx.Done():
-				return
-			case sig := <-stop:
-				errors <- appErr{
-					err:   fmt.Errorf("interrupted with signal %s, aborting", sig.String()),
-					level: logFatal,
-				}
-				return
-			}
-		}
+		log.Println(srv.ListenAndServe())
 	}()
+	sig := <-stop
+	log.Printf("interrupted with signal %s, aborting\n", sig.String())
 
-	wg.Add(1)
-	go func() {
-		defer log.Println("done with server")
-		defer wg.Done()
-		err := srv.ListenAndServe()
-		if err == http.ErrServerClosed {
-			log.Println(err)
-		} else {
-			errors <- err
-		}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer log.Println("done with others")
-		defer wg.Done()
-		err = eg.Wait()
-		if err != nil {
-			errors <- err
-		}
-	}()
-
-	log.Println(<-errors)
-
+	ctx, c := context.WithTimeout(appCtx, 2*time.Second)
+	defer c()
 	err = srv.Shutdown(ctx)
 	if err != nil {
 		log.Println(err)
 	}
 
 	cleanup := func() {
-		log.Println("clean up")
 		cancel()
 		intervalTicker.Stop()
 		close(incomingItems)
@@ -519,11 +458,11 @@ func main() {
 		close(errCh)
 	}
 
+	log.Println("clean up")
 	cleanup()
 	log.Println("clean up done")
 
-	wg.Wait()
-
+	// dump stories at the end
 	stories, _ := json.Marshal(app.lq.store)
 	log.Println(ioutil.WriteFile(outputFilePath, stories, 0644))
 
