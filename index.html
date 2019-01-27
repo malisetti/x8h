@@ -38,7 +38,7 @@
                 {{ if eq $item.URL "" }}
                 <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a>
                 {{ else }}
-                <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}"><i class="discuss">discuss</i></a>
+                <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> <a target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
                 {{ end }}
             {{ if $item.Deleted }}
               </del>

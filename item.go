@@ -7,6 +7,8 @@ type item struct {
 	Deleted bool   `json:"deleted"`
 	Dead    bool   `json:"dead"`
 
+	DiscussLink string `json:"discussLink"`
+
 	From     string `json:"from"`
 	Priority int    `json:"priority"`
 

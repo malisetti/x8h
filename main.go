@@ -36,6 +36,7 @@ const (
 	eightHrs           = 8 * 60 * 60
 	humanTrackingLimit = 300
 	itemFromFile       = "file"
+	itemFromHN         = "hn"
 )
 
 type changeAction string
@@ -276,6 +277,9 @@ func main() {
 					} else {
 						log.Println(err)
 					}
+				}
+				if item.From != itemFromFile { // from file
+					item.DiscussLink = fmt.Sprintf(hnPostLink, item.ID)
 				}
 
 				removedItemIfAny := app.lq.add(item)
