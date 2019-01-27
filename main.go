@@ -356,6 +356,11 @@ func main() {
 	var visitCount adder
 
 	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Println(r.RemoteAddr)
+		possibleIP := r.Header.Get("x-forwarded-for")
+		if possibleIP != "" {
+			log.Println(possibleIP)
+		}
 		app.Lock()
 		defer app.Unlock()
 
