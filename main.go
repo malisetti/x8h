@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -28,6 +29,8 @@ const (
 	storyLink            = "https://hacker-news.firebaseio.com/v0/item/%d.json"
 	hnPostLink           = "https://news.ycombinator.com/item?id=%d"
 	frontPageNumArticles = 30
+	inputFilePath        = "./input.json"
+	outputFilePath       = "./output.json"
 	hnPollTime           = 1 * time.Minute
 	defaultPort          = 8080
 
@@ -63,17 +66,6 @@ func (ae appErr) Error() string {
 type itemList []int
 
 type unixTime int64
-
-type item struct {
-	ID      int    `json:"id"`
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Deleted bool   `json:"deleted"`
-	Dead    bool   `json:"dead"`
-
-	Added  unixTime `json:"-"`
-	Domain string   `json:"-"`
-}
 
 type change struct {
 	Action changeAction
@@ -135,11 +127,17 @@ func main() {
 	errCh := make(chan appErr)
 	changeCh := make(chan change)
 
-	st := stories{
-		list: make(map[int]item),
+	queue := &limitQueue{
+		limit: humanTrackingLimit,
+		keys:  []int{},
+		store: make(map[int]item),
 	}
 
-	incomingItems := make(chan itemList)
+	app := app{
+		lq: queue,
+	}
+
+	incomingItems := make(chan item)
 
 	r := strings.NewReplacer("http://", "", "https://", "", "www.", "", "www2.", "", "www3.", "")
 	urlToDomain := func(link string) (string, error) {
@@ -181,15 +179,35 @@ func main() {
 		return items[:limit], nil
 	}
 
-	topStoriesFetcher := func(ctx context.Context, limit int) error {
-		// send items
-		items, err := fetchTopStories(ctx, limit)
+	fetchStoriesFromFile := func(inputFilePath string) ([]item, error) {
+		f, err := os.Open(inputFilePath)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+
+		dec := json.NewDecoder(f)
+		var items []item
+		err = dec.Decode(&items)
+		if err != nil {
+			return nil, err
+		}
+		return items, nil
+	}
+
+	serverInputsToUserFetcher := func(ctx context.Context, inputFilePath string) error {
+		items, err := fetchStoriesFromFile(inputFilePath)
 		if err != nil {
 			return err
 		}
-		if appCtx.Err() == nil {
-			incomingItems <- items
+		for _, it := range items {
+			if it.From == "" {
+				it.From = "file"
+			}
+
+			incomingItems <- it
 		}
+
 		return nil
 	}
 
@@ -214,57 +232,73 @@ func main() {
 		return i, nil
 	}
 
-	storyLister := func(ctx context.Context) error {
-		lookup := make(map[int]struct{})
-		var idHolder []int
-		for {
-			select {
-			case items := <-incomingItems:
-				for _, itemID := range items {
-					select {
-					case <-ctx.Done():
-						return nil
-					default:
-						func() {
-							if _, ok := lookup[itemID]; ok {
-								return
-							}
-							item, err := fetchItem(ctx, itemID)
-							if err != nil {
-								log.Println(err)
-								return
-							}
-
-							idHolder = append(idHolder, itemID)
-							lookup[itemID] = struct{}{}
-							if len(lookup) >= humanTrackingLimit {
-								delete(lookup, idHolder[0])
-								idHolder = idHolder[1:]
-							}
-
-							item.Added = unixTime(time.Now().Unix())
-							domain, err := urlToDomain(item.URL)
-							if err == nil {
-								item.Domain = domain
-							} else {
-								log.Println(err)
-							}
-
-							st.Lock()
-							defer st.Unlock()
-							st.list[itemID] = item
-							// send this to added chan
-							changeCh <- change{
-								Action: changeAdd,
-								Item:   item,
-							}
-						}()
-					}
-				}
-			case <-ctx.Done():
+	topStoriesFetcher := func(ctx context.Context, limit int) error {
+		// send items
+		itemIds, err := fetchTopStories(ctx, limit)
+		if err != nil {
+			return err
+		}
+		for _, itID := range itemIds {
+			if appCtx.Err() != nil {
 				return nil
 			}
+
+			item, err := fetchItem(ctx, itID)
+			if err != nil {
+				log.Println(err) // warning
+			} else {
+				incomingItems <- item
+			}
 		}
+
+		return nil
+	}
+
+	storyLister := func(ctx context.Context) error {
+		for item := range incomingItems {
+			func() {
+				app.Lock()
+				defer app.Unlock()
+
+				if _, ok := app.lq.store[item.ID]; ok {
+					return
+				}
+
+				if item.Added == 0 {
+					item.Added = unixTime(time.Now().Unix())
+				}
+				if item.Domain == "" {
+					domain, err := urlToDomain(item.URL)
+					if err == nil {
+						item.Domain = domain
+					} else {
+						log.Println(err)
+					}
+				}
+
+				if len(app.lq.store) >= humanTrackingLimit {
+					changeCh <- change{
+						Action: changeRemove,
+						Item:   item,
+					}
+					app.lq.remove(app.lq.keys[0])
+					app.lq.keys = app.lq.keys[1:]
+				}
+
+				err = app.lq.add(item)
+				if err != nil {
+					log.Println(err)
+				} else {
+					changeCh <- change{
+						Action: changeAdd,
+						Item:   item,
+					}
+				}
+
+			}()
+		}
+
+		return nil
 	}
 
 	storyRemover := func(ctx context.Context) error {
@@ -273,18 +307,34 @@ func main() {
 			return err
 		}
 
-		st.Lock()
-		defer st.Unlock()
-		for id, it := range st.list {
+		fileItems, err := fetchStoriesFromFile(inputFilePath)
+		if err != nil {
+			return err
+		}
+
+		app.Lock()
+		defer app.Unlock()
+		for id, it := range app.lq.store {
 			if ctx.Err() != nil {
 				return nil
 			}
 
 			stillAtTop := false
-			for _, tid := range topItems {
-				if tid == id {
-					stillAtTop = true
-					break
+			switch it.From {
+			case "file":
+				for _, it := range fileItems {
+					if id == it.ID {
+						stillAtTop = true
+						break
+					}
+				}
+
+			default:
+				for _, tid := range topItems {
+					if tid == id {
+						stillAtTop = true
+						break
+					}
 				}
 			}
 
@@ -292,9 +342,9 @@ func main() {
 				// send these to removed chan
 				changeCh <- change{
 					Action: changeRemove,
-					Item:   st.list[id],
+					Item:   app.lq.store[id],
 				}
-				delete(st.list, id)
+				app.lq.remove(id)
 			}
 		}
 		return nil
@@ -325,11 +375,11 @@ func main() {
 	var visitCount adder
 
 	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		st.Lock()
-		defer st.Unlock()
+		app.Lock()
+		defer app.Unlock()
 
 		data := make(map[string]interface{})
-		data["Data"] = st.list
+		data["Data"] = app.lq.store
 
 		visitCount.Lock()
 		defer visitCount.Unlock()
@@ -366,6 +416,10 @@ func main() {
 				return topStoriesFetcher(ctx, frontPageNumArticles)
 			})
 			eg.Go(func() error {
+				log.Println("starting file stories fetcher")
+				return serverInputsToUserFetcher(ctx, inputFilePath)
+			})
+			eg.Go(func() error {
 				log.Println("starting story remover")
 				return storyRemover(ctx)
 			})
@@ -392,6 +446,10 @@ func main() {
 	eg.Go(func() error {
 		log.Println("starting top stories fetcher")
 		return topStoriesFetcher(ctx, frontPageNumArticles)
+	})
+	eg.Go(func() error {
+		log.Println("starting file stories fetcher")
+		return serverInputsToUserFetcher(ctx, inputFilePath)
 	})
 	eg.Go(func() error {
 		log.Println("starting story lister")
@@ -465,6 +523,9 @@ func main() {
 	log.Println("clean up done")
 
 	wg.Wait()
+
+	stories, _ := json.Marshal(app.lq.store)
+	log.Println(ioutil.WriteFile(outputFilePath, stories, 0644))
 
 	log.Println("END")
 }
