@@ -71,7 +71,7 @@ type unixTime int64
 
 type change struct {
 	Action changeAction
-	Item   item
+	Item   *item
 }
 
 func (c change) String() string {
@@ -127,14 +127,14 @@ func main() {
 	queue := &limitQueue{
 		limit: humanTrackingLimit,
 		keys:  []int{},
-		store: make(map[int]item),
+		store: make(map[int]*item),
 	}
 
 	app := app{
 		lq: queue,
 	}
 
-	incomingItems := make(chan item)
+	incomingItems := make(chan *item)
 
 	r := strings.NewReplacer("http://", "", "https://", "", "www.", "", "www2.", "", "www3.", "")
 	urlToDomain := func(link string) (string, error) {
@@ -176,7 +176,7 @@ func main() {
 		return items[:limit], nil
 	}
 
-	fetchStoriesFromFile := func(inputFilePath string) ([]item, error) {
+	fetchStoriesFromFile := func(inputFilePath string) ([]*item, error) {
 		f, err := os.Open(inputFilePath)
 		if err != nil {
 			return nil, err
@@ -184,7 +184,7 @@ func main() {
 		defer f.Close()
 
 		dec := json.NewDecoder(f)
-		var items []item
+		var items []*item
 		err = dec.Decode(&items)
 		if err != nil {
 			return nil, err
@@ -208,25 +208,26 @@ func main() {
 		return nil
 	}
 
-	fetchItem := func(ctx context.Context, itemID int) (i item, err error) {
+	fetchItem := func(ctx context.Context, itemID int) (*item, error) {
 		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf(storyLink, itemID), nil)
 		if err != nil {
-			return
+			return nil, err
 		}
 		resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 		if err != nil {
-			return
+			return nil, err
 		}
 
 		defer resp.Body.Close()
 
 		decoder := json.NewDecoder(resp.Body)
-		err = decoder.Decode(&i)
+		var it item
+		err = decoder.Decode(&it)
 		if err != nil {
-			return
+			return nil, err
 		}
 
-		return i, nil
+		return &it, nil
 	}
 
 	topStoriesFetcher := func(ctx context.Context, limit int) error {
@@ -273,21 +274,18 @@ func main() {
 					}
 				}
 
-				if len(app.lq.store) >= humanTrackingLimit {
+				removedItemIfAny := app.lq.add(item)
+
+				if removedItemIfAny != nil {
 					changeCh <- change{
 						Action: changeRemove,
-						Item:   item,
+						Item:   removedItemIfAny,
 					}
 				}
 
-				err = app.lq.add(item)
-				if err != nil {
-					log.Println(err)
-				} else {
-					changeCh <- change{
-						Action: changeAdd,
-						Item:   item,
-					}
+				changeCh <- change{
+					Action: changeAdd,
+					Item:   item,
 				}
 
 			}()
