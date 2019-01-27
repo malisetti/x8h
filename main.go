@@ -29,8 +29,6 @@ const (
 	storyLink            = "https://hacker-news.firebaseio.com/v0/item/%d.json"
 	hnPostLink           = "https://news.ycombinator.com/item?id=%d"
 	frontPageNumArticles = 30
-	inputFilePath        = "./input.json"
-	outputFilePath       = "./output.json"
 	hnPollTime           = 1 * time.Minute
 	defaultPort          = 8080
 
@@ -102,6 +100,16 @@ func main() {
 	templateFile := os.Getenv("TMPL_PATH")
 	if templateFile == "" {
 		templateFile = "./index.html"
+	}
+
+	inputFilePath := os.Getenv("INPUT_PATH")
+	if inputFilePath == "" {
+		inputFilePath = "./input.json"
+	}
+
+	outputFilePath := os.Getenv("OUTPUT_PATH")
+	if outputFilePath == "" {
+		outputFilePath = "./output.json"
 	}
 
 	tmpl := template.New("index.html")
