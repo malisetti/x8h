@@ -20,6 +20,8 @@ import (
 	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
 	sim "github.com/ulule/limiter/v3/drivers/store/memory"
 
+	"encoding/hex"
+
 	"golang.org/x/sync/errgroup"
 )
 
@@ -85,6 +87,19 @@ type adder struct {
 var version string
 
 func main() {
+	encKey := os.Getenv("ENC_KEY")
+	if encKey == "" {
+		panic("ENC_KEY should be set to a string")
+	}
+
+	keyBytes, err := hex.DecodeString(encKey)
+	if err != nil {
+		panic("ENC_KEY is not hex decodable")
+	}
+
+	key := [32]byte{}
+	copy(key[:], keyBytes)
+
 	var port int
 	// use PORT env else port
 	envPort := os.Getenv("PORT")
@@ -114,7 +129,7 @@ func main() {
 	}
 
 	tmpl := template.New("index.html")
-	tmpl, err := tmpl.ParseFiles(templateFile)
+	tmpl, err = tmpl.ParseFiles(templateFile)
 	if err != nil {
 		panic(err)
 	}
@@ -144,6 +159,28 @@ func main() {
 	}
 
 	incomingItems := make(chan *item)
+
+	encAndHex := func(x string) (string, error) {
+		cipher, err := Encrypt([]byte(x), &key)
+		if err != nil {
+			return "", err
+		}
+
+		return hex.EncodeToString(cipher), nil
+	}
+
+	decFromHex := func(x string) (string, error) {
+		buf, err := hex.DecodeString(x)
+		if err != nil {
+			return "", err
+		}
+		plainTextBuf, err := Decrypt(buf, &key)
+		if err != nil {
+			return "", err
+		}
+
+		return string(plainTextBuf), nil
+	}
 
 	r := strings.NewReplacer("http://", "", "https://", "", "www.", "", "www2.", "", "www3.", "")
 	urlToDomain := func(link string) (string, error) {
@@ -282,6 +319,26 @@ func main() {
 					item.DiscussLink = fmt.Sprintf(hnPostLink, item.ID)
 				}
 
+				if strings.TrimSpace(item.URL) != "" {
+					h, err := encAndHex(item.URL)
+					if err != nil {
+						log.Println(err)
+						return
+					} else {
+						item.EURL = fmt.Sprintf("/u?h=%s", h)
+					}
+				}
+
+				if strings.TrimSpace(item.DiscussLink) != "" {
+					h, err := encAndHex(item.DiscussLink)
+					if err != nil {
+						log.Println(err)
+						return
+					} else {
+						item.EDiscussLink = fmt.Sprintf("/u?h=%s", h)
+					}
+				}
+
 				removedItemIfAny := app.lq.add(item)
 
 				if removedItemIfAny != nil {
@@ -391,6 +448,17 @@ func main() {
 			}
 		}
 		return
+	})))
+
+	http.Handle("/u", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := r.URL.Query().Get("h")
+		link, err := decFromHex(h)
+		if err != nil {
+			fmt.Fprintln(w, err)
+			return
+		}
+
+		http.Redirect(w, r, link, http.StatusSeeOther)
 	})))
 
 	log.Println("START")

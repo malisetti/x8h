@@ -9,6 +9,9 @@ type item struct {
 
 	DiscussLink string `json:"discussLink"`
 
+	EURL         string `json:"_"`
+	EDiscussLink string `json:"_"`
+
 	From     string `json:"from"`
 	Priority int    `json:"priority"`
 
