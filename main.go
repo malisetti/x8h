@@ -369,6 +369,7 @@ func main() {
 		if possibleIP != "" {
 			log.Println(possibleIP)
 		}
+		log.Println(r.UserAgent())
 		app.Lock()
 		defer app.Unlock()
 
