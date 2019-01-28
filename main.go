@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -139,9 +140,22 @@ func main() {
 		panic(err)
 	}
 	serverETag = resp.Header.Get("ETag")
-	db, openerr := geoip2.Open(maxMindDatabseURL)
+	geoIPReader, openerr := geoip2.Open(maxMindDatabseURL)
 	if openerr != nil {
 		panic(err)
+	}
+
+	queue := &limitQueue{
+		limit: humanTrackingLimit,
+		keys:  []int{},
+		store: make(map[int]*item),
+	}
+
+	mmdbPath := "GeoLite2-City.mmdb"
+
+	app := app{
+		geoIPReader: geoIPReader,
+		lq:          queue,
 	}
 
 	mmdbDownloader := func() {
@@ -192,9 +206,25 @@ func main() {
 				}
 
 				fileDownloadCount++
+
+				geoIPReader, err := geoip2.Open(newFilePath)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				app.Lock()
+				app.geoIPReader = geoIPReader
+				app.Unlock()
+
+				err = os.Remove(mmdbPath)
+				if err != nil {
+					mmdbPath = newFilePath
+				}
 			}
 		}
 	}
+
+	go mmdbDownloader()
 
 	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
 
@@ -202,16 +232,6 @@ func main() {
 
 	errCh := make(chan appErr)
 	changeCh := make(chan change)
-
-	queue := &limitQueue{
-		limit: humanTrackingLimit,
-		keys:  []int{},
-		store: make(map[int]*item),
-	}
-
-	app := app{
-		lq: queue,
-	}
 
 	incomingItems := make(chan *item)
 
@@ -431,17 +451,39 @@ func main() {
 		}
 	}
 
+	const headerXForwardedFor = "X-Forwarded-For"
+	const headerXRealIP = "X-Real-IP"
+	realIP := func(r *http.Request) string {
+		ra := r.RemoteAddr
+		if ip := r.Header.Get(headerXForwardedFor); ip != "" {
+			ra = strings.Split(ip, ", ")[0]
+		} else if ip := r.Header.Get(headerXRealIP); ip != "" {
+			ra = ip
+		} else {
+			ra, _, _ = net.SplitHostPort(ra)
+		}
+
+		return ra
+	}
+
 	var visitCount adder
 
 	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println(r.RemoteAddr)
-		possibleIP := r.Header.Get("x-forwarded-for")
-		if possibleIP != "" {
-			log.Println(possibleIP)
-		}
+		possibleIP := realIP(r)
+		log.Println(possibleIP)
 		log.Println(r.UserAgent())
+
+		ip := net.ParseIP(possibleIP)
+
 		app.Lock()
 		defer app.Unlock()
+
+		city, err := app.geoIPReader.City(ip)
+		if err != nil {
+			log.Println(err)
+		} else {
+			log.Println(city.Country.IsoCode)
+		}
 
 		data := make(map[string]interface{})
 		data["Data"] = app.lq.store
