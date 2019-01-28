@@ -140,8 +140,13 @@ func main() {
 		panic(err)
 	}
 	serverETag = resp.Header.Get("ETag")
-	geoIPReader, openerr := geoip2.Open(maxMindDatabseURL)
-	if openerr != nil {
+
+	mmdbPath := "GeoLite2-City.mmdb"
+
+	appCtx, cancel := context.WithCancel(context.Background())
+
+	geoIPReader, err := geoip2.Open(mmdbPath)
+	if err != nil {
 		panic(err)
 	}
 
@@ -151,84 +156,91 @@ func main() {
 		store: make(map[int]*item),
 	}
 
-	mmdbPath := "GeoLite2-City.mmdb"
-
 	app := app{
 		geoIPReader: geoIPReader,
 		lq:          queue,
 	}
 
-	mmdbDownloader := func() {
-		for range time.Tick(24 * time.Hour) {
-			newFilePath := fmt.Sprintf("GeoLite2-City-%d.mmdb", fileDownloadCount)
+	var newFilePath string
+	var ETag string
 
-			resp, err := http.Head(maxMindDatabseURL)
+	fetchLatestMmdb := func(ctx context.Context) (*geoip2.Reader, error) {
+		newFilePath = fmt.Sprintf("GeoLite2-City-%d.mmdb", fileDownloadCount)
+		req, err := http.NewRequest(http.MethodHead, maxMindDatabseURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		ETag = resp.Header.Get("Last-Modified")
+		lastModified, err := time.Parse(http.TimeFormat, resp.Header.Get("Last-Modified"))
+		if err != nil {
+			return nil, err
+		}
+
+		if ETag != serverETag || lastModified.After(time.Now()) {
+			out, err := os.Create(newFilePath)
+			if err != nil {
+				return nil, err
+			}
+			defer out.Close()
+			req, err := http.NewRequest(http.MethodGet, maxMindDatabseURL, nil)
+			if err != nil {
+				return nil, err
+			}
+			resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+			if err != nil {
+				return nil, err
+			}
+
+			defer resp.Body.Close()
+
+			unziper, err := gzip.NewReader(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+
+			defer unziper.Close()
+
+			_, err = io.Copy(out, unziper)
+			if err != nil {
+				return nil, err
+			}
+
+			fileDownloadCount++
+
+			return geoip2.Open(newFilePath)
+		}
+
+		return nil, fmt.Errorf("ETag != serverETag || lastModified.After(time.Now()) is not true")
+	}
+
+	twentyFourHrs := 24 * time.Hour
+	mmdbDownloader := func(ctx context.Context) {
+		for range time.Tick(twentyFourHrs) {
+			geoIPReader, err := fetchLatestMmdb(ctx)
 			if err != nil {
 				log.Println(err)
 				continue
 			}
+			app.Lock()
+			app.geoIPReader = geoIPReader
+			app.Unlock()
 
-			ETag := resp.Header.Get("Last-Modified")
-			lastModified, err := time.Parse(http.TimeFormat, resp.Header.Get("Last-Modified"))
+			err = os.Remove(mmdbPath)
 			if err != nil {
 				log.Println(err)
 				continue
 			}
-
-			if ETag != serverETag || lastModified.After(time.Now()) {
-				out, err := os.Create(newFilePath)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				defer out.Close()
-
-				resp, err := http.Get(maxMindDatabseURL)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				defer resp.Body.Close()
-
-				unziper, err := gzip.NewReader(resp.Body)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				defer unziper.Close()
-
-				_, err = io.Copy(out, unziper)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				fileDownloadCount++
-
-				geoIPReader, err := geoip2.Open(newFilePath)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				app.Lock()
-				app.geoIPReader = geoIPReader
-				app.Unlock()
-
-				err = os.Remove(mmdbPath)
-				if err != nil {
-					mmdbPath = newFilePath
-				}
-			}
+			mmdbPath = newFilePath
+			serverETag = ETag
 		}
 	}
 
-	go mmdbDownloader()
-
 	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
-
-	appCtx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan appErr)
 	changeCh := make(chan change)
@@ -548,6 +560,9 @@ func main() {
 
 	log.Println("starting top stories fetcher")
 	go topStoriesFetcher(appCtx, frontPageNumArticles)
+
+	log.Println("starting mmdb downloader")
+	go mmdbDownloader(appCtx)
 
 	go func() {
 		err := serverInputsToUserFetcher(appCtx, inputFilePath)
