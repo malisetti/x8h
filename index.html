@@ -7,6 +7,9 @@
   <title>Top HN Posts - since last 8hrs</title>
   <style>
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;line-height:1.5;font-size:1em;margin:10px;-webkit-text-size-adjust:100%}
+    .list li {
+      padding: 3px
+    }
     #footer-info li{
       display: inline;
     }
@@ -27,7 +30,7 @@
   </header>
   
   <main>
-      <ul>
+      <ul class="list">
           {{ range $key, $item := .Data }}
           <li>
             {{ if $item.Deleted }}
@@ -36,7 +39,7 @@
               <s>
             {{ end }}
                 {{ if eq $item.URL "" }}
-                <a target="_blank" href="https://news.ycombinator.com/item?id={{ $key }}">{{ $item.Title }}</a>
+                <a target="_blank" href="{{ $item.DiscussLink }}">{{ $item.Title }}</a>
                 {{ else }}
                 <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> <a target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
                 {{ end }}
@@ -54,8 +57,7 @@
     <ul id="footer-info">
       <li>Visits : {{ .Visits }} |</li>
       <li>Links : {{ len .Data }} |</li>
-      <li>Version: {{ .Version }} |</li>
-      <li><a href="http://github.com/mseshachalam/HN-Posts-last-8hrs" target="_blank">Source</a> |</li>
+      <li>Deployed At: {{ .DeployedAt }} |</li>
       <li><a href="https://twitter.com/seshnsesh" target="_blank">Contact</a></li>
     </ul>
   </footer>

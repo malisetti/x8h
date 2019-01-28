@@ -1,4 +1,4 @@
-module github.com/mseshachalam/HN-Posts-last-8hrs
+module github.com/mseshachalam/x8h
 
 require (
 	github.com/ulule/limiter/v3 v3.1.0
