@@ -1,10 +1,12 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -15,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/oschwald/geoip2-golang"
 
 	"github.com/ulule/limiter/v3"
 	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
@@ -37,6 +41,8 @@ const (
 	humanTrackingLimit = 300
 	itemFromFile       = "file"
 	itemFromHN         = "hn"
+
+	maxMindDatabseURL = "http://geolite.maxmind.com/download/geoip/database/GeoLite2-City.mmdb.gz"
 )
 
 type changeAction string
@@ -124,6 +130,70 @@ func main() {
 	rate, err := limiter.NewRateFromFormatted(rateLimit)
 	if err != nil {
 		panic(err)
+	}
+
+	fileDownloadCount := 0
+	var serverETag string
+	resp, err := http.Head(maxMindDatabseURL)
+	if err != nil {
+		panic(err)
+	}
+	serverETag = resp.Header.Get("ETag")
+	db, openerr := geoip2.Open(maxMindDatabseURL)
+	if openerr != nil {
+		panic(err)
+	}
+
+	mmdbDownloader := func() {
+		for range time.Tick(24 * time.Hour) {
+			newFilePath := fmt.Sprintf("GeoLite2-City-%d.mmdb", fileDownloadCount)
+
+			resp, err := http.Head(maxMindDatabseURL)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			ETag := resp.Header.Get("Last-Modified")
+			lastModified, err := time.Parse(http.TimeFormat, resp.Header.Get("Last-Modified"))
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			if ETag != serverETag || lastModified.After(time.Now()) {
+				out, err := os.Create(newFilePath)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				defer out.Close()
+
+				resp, err := http.Get(maxMindDatabseURL)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+
+				defer resp.Body.Close()
+
+				unziper, err := gzip.NewReader(resp.Body)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+
+				defer unziper.Close()
+
+				_, err = io.Copy(out, unziper)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+
+				fileDownloadCount++
+			}
+		}
 	}
 
 	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
