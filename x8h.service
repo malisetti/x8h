@@ -5,8 +5,6 @@ After=network.target
 [Service]
 ExecStart=/home/abbiya/x8h
 Restart=on-failure
-Environment="PORT=80"
-Environment="TMPL_PATH=/home/abbiya/index.html"
 Environment="APP_STORAGE=/home/abbiya/app.json"
 
 [Install]
