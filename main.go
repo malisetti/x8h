@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ulule/limiter/v3"
@@ -409,7 +410,7 @@ func main() {
 	log.Println("starting the app")
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, os.Kill)
+	signal.Notify(stop, syscall.SIGTERM, os.Interrupt, os.Kill)
 
 	intervalTicker := time.NewTicker(x8h.Config.HNPollTime * time.Second)
 
