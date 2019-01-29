@@ -270,6 +270,7 @@ func main() {
 			if err != nil {
 				log.Println(err) // warning
 			} else {
+				item.From = itemFromHN
 				incomingItems <- item
 			}
 		}
@@ -322,11 +323,6 @@ func main() {
 			return err
 		}
 
-		fileItems, err := fetchStoriesFromFile(appStorage)
-		if err != nil {
-			return err
-		}
-
 		x8h.Lock()
 		defer x8h.Unlock()
 		for id, it := range x8h.LimitQueue.Store {
@@ -336,21 +332,17 @@ func main() {
 
 			stillAtTop := false
 			switch it.From {
-			case itemFromFile:
-				for _, it := range fileItems {
-					if id == it.ID {
-						stillAtTop = true
-						break
-					}
-				}
-
-			default:
+			case itemFromHN:
 				for _, tid := range topItems {
 					if tid == id {
 						stillAtTop = true
 						break
 					}
 				}
+			case itemFromFile:
+				stillAtTop = false // should remove anything from file after 8hrs
+			default:
+				stillAtTop = false
 			}
 
 			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)).Seconds() > eightHrs {
@@ -474,7 +466,12 @@ func main() {
 
 	serverErrors := make(chan error)
 	go func() {
-		serverErrors <- srv.ListenAndServe()
+		err := srv.ListenAndServe()
+		if appCtx.Err() == nil && err != http.ErrServerClosed {
+			serverErrors <- err
+		} else {
+			log.Println(err)
+		}
 	}()
 
 	select {
@@ -491,17 +488,14 @@ func main() {
 		log.Println(err)
 	}
 
-	cleanup := func() {
+	defer func() {
 		cancel()
 		intervalTicker.Stop()
 		close(incomingItems)
 		close(changeCh)
 		close(errCh)
-	}
-
-	log.Println("clean up")
-	cleanup()
-	log.Println("clean up done")
+		close(serverErrors)
+	}()
 
 	log.Println("END")
 }
