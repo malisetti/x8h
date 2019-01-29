@@ -472,11 +472,17 @@ func main() {
 
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
 
+	serverErrors := make(chan error)
 	go func() {
-		log.Println(srv.ListenAndServe())
+		serverErrors <- srv.ListenAndServe()
 	}()
-	sig := <-stop
-	log.Printf("interrupted with signal %s, aborting\n", sig.String())
+
+	select {
+	case sig := <-stop:
+		log.Printf("interrupted with signal %s, aborting\n", sig.String())
+	case err := <-serverErrors:
+		log.Println(err)
+	}
 
 	ctx, c := context.WithTimeout(appCtx, 2*time.Second)
 	defer c()
