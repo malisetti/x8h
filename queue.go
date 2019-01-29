@@ -1,18 +1,18 @@
 package main
 
 type limitQueue struct {
-	limit int
-	keys  []int
-	store map[int]*item
+	Limit int           `json:"limit"`
+	Keys  []int         `json:"keys"`
+	Store map[int]*item `json:"store"`
 }
 
 func (lm *limitQueue) add(i *item) *item {
-	lm.store[i.ID] = i
-	lm.keys = append(lm.keys, i.ID)
+	lm.Store[i.ID] = i
+	lm.Keys = append(lm.Keys, i.ID)
 
-	if len(lm.store) >= lm.limit {
-		it := lm.remove(lm.keys[0])
-		lm.keys = lm.keys[1:]
+	if len(lm.Store) >= lm.Limit {
+		it := lm.remove(lm.Keys[0])
+		lm.Keys = lm.Keys[1:]
 
 		return it
 	}
@@ -21,7 +21,7 @@ func (lm *limitQueue) add(i *item) *item {
 }
 
 func (lm *limitQueue) remove(id int) *item {
-	i := lm.store[id]
-	delete(lm.store, id)
+	i := lm.Store[id]
+	delete(lm.Store, id)
 	return i
 }

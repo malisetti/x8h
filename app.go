@@ -4,5 +4,6 @@ import "sync"
 
 type app struct {
 	sync.Mutex
-	lq *limitQueue
+	LimitQueue *limitQueue `json:"limitQueue"`
+	VisitCount int         `json:"visitCount"`
 }

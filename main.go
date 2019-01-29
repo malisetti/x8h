@@ -7,13 +7,13 @@ import (
 	"html/template"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ulule/limiter/v3"
@@ -64,8 +64,6 @@ func (ae appErr) Error() string {
 	return fmt.Sprintf("occured: %v with level: %s", ae.err, ae.level)
 }
 
-type itemList []int
-
 type unixTime int64
 
 type change struct {
@@ -75,11 +73,6 @@ type change struct {
 
 func (c change) String() string {
 	return fmt.Sprintf("%s : %d", c.Action, c.Item.ID)
-}
-
-type adder struct {
-	sync.Mutex
-	count int
 }
 
 var version string
@@ -103,14 +96,9 @@ func main() {
 		templateFile = "./index.html"
 	}
 
-	inputFilePath := os.Getenv("INPUT_PATH")
-	if inputFilePath == "" {
-		inputFilePath = "./input.json"
-	}
-
-	outputFilePath := os.Getenv("OUTPUT_PATH")
-	if outputFilePath == "" {
-		outputFilePath = "./output.json"
+	appStorage := os.Getenv("APP_STORAGE")
+	if appStorage == "" {
+		appStorage = "./app.json"
 	}
 
 	tmpl := template.New("index.html")
@@ -133,15 +121,39 @@ func main() {
 	errCh := make(chan appErr)
 	changeCh := make(chan change)
 
-	queue := &limitQueue{
-		limit: humanTrackingLimit,
-		keys:  []int{},
-		store: make(map[int]*item),
+	var x8h *app
+
+	storageFile, err := os.Open(appStorage)
+	if err != nil {
+		log.Println(err)
+	}
+	err = json.NewDecoder(storageFile).Decode(&x8h)
+	if err != nil {
+		log.Println(err)
 	}
 
-	app := app{
-		lq: queue,
+	if x8h == nil {
+		queue := &limitQueue{
+			Limit: humanTrackingLimit,
+			Keys:  []int{},
+			Store: make(map[int]*item),
+		}
+
+		x8h = &app{
+			LimitQueue: queue,
+			VisitCount: 0,
+		}
 	}
+
+	defer func() {
+		// dump stories at the end
+		appDump, err := json.Marshal(x8h)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		log.Println(ioutil.WriteFile(appStorage, appDump, 0644))
+	}()
 
 	incomingItems := make(chan *item)
 
@@ -173,7 +185,7 @@ func main() {
 		defer resp.Body.Close()
 
 		decoder := json.NewDecoder(resp.Body)
-		var items itemList
+		var items []int
 		err = decoder.Decode(&items)
 		if err != nil {
 			return nil, err
@@ -193,10 +205,14 @@ func main() {
 		defer f.Close()
 
 		dec := json.NewDecoder(f)
-		var items []*item
-		err = dec.Decode(&items)
+		var dump *app
+		err = dec.Decode(&dump)
 		if err != nil {
 			return nil, err
+		}
+		var items []*item
+		for _, it := range dump.LimitQueue.Store {
+			items = append(items, it)
 		}
 		return items, nil
 	}
@@ -264,8 +280,8 @@ func main() {
 	storyLister := func(ctx context.Context) {
 		for item := range incomingItems {
 			func() {
-				app.Lock()
-				defer app.Unlock()
+				x8h.Lock()
+				defer x8h.Unlock()
 
 				if item.Added == 0 {
 					item.Added = unixTime(time.Now().Unix())
@@ -282,7 +298,7 @@ func main() {
 					item.DiscussLink = fmt.Sprintf(hnPostLink, item.ID)
 				}
 
-				removedItemIfAny := app.lq.add(item)
+				removedItemIfAny := x8h.LimitQueue.add(item)
 
 				if removedItemIfAny != nil {
 					changeCh <- change{
@@ -306,14 +322,14 @@ func main() {
 			return err
 		}
 
-		fileItems, err := fetchStoriesFromFile(inputFilePath)
+		fileItems, err := fetchStoriesFromFile(appStorage)
 		if err != nil {
 			return err
 		}
 
-		app.Lock()
-		defer app.Unlock()
-		for id, it := range app.lq.store {
+		x8h.Lock()
+		defer x8h.Unlock()
+		for id, it := range x8h.LimitQueue.Store {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -341,9 +357,9 @@ func main() {
 				// send these to removed chan
 				changeCh <- change{
 					Action: changeRemove,
-					Item:   app.lq.store[id],
+					Item:   x8h.LimitQueue.Store[id],
 				}
-				app.lq.remove(id)
+				x8h.LimitQueue.remove(id)
 			}
 		}
 		return nil
@@ -361,27 +377,34 @@ func main() {
 		}
 	}
 
-	var visitCount adder
+	const headerXForwardedFor = "X-Forwarded-For"
+	const headerXRealIP = "X-Real-IP"
+	realIP := func(r *http.Request) string {
+		ra := r.RemoteAddr
+		if ip := r.Header.Get(headerXForwardedFor); ip != "" {
+			ra = strings.Split(ip, ", ")[0]
+		} else if ip := r.Header.Get(headerXRealIP); ip != "" {
+			ra = ip
+		} else {
+			ra, _, _ = net.SplitHostPort(ra)
+		}
+
+		return ra
+	}
 
 	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println(r.RemoteAddr)
-		possibleIP := r.Header.Get("x-forwarded-for")
-		if possibleIP != "" {
-			log.Println(possibleIP)
-		}
+		log.Println(realIP(r))
 		log.Println(r.UserAgent())
-		app.Lock()
-		defer app.Unlock()
+
+		x8h.Lock()
+		defer x8h.Unlock()
 
 		data := make(map[string]interface{})
-		data["Data"] = app.lq.store
+		data["Data"] = x8h.LimitQueue.Store
 
-		visitCount.Lock()
-		defer visitCount.Unlock()
+		x8h.VisitCount++
 
-		visitCount.count++
-
-		data["Visits"] = visitCount.count
+		data["Visits"] = x8h.VisitCount
 		data["Version"] = version
 
 		err = tmpl.Execute(w, data)
@@ -412,7 +435,7 @@ func main() {
 			})
 			eg.Go(func() error {
 				log.Println("starting file stories fetcher")
-				return serverInputsToUserFetcher(ctx, inputFilePath)
+				return serverInputsToUserFetcher(ctx, appStorage)
 			})
 			eg.Go(func() error {
 				log.Println("starting story remover")
@@ -438,7 +461,7 @@ func main() {
 	go topStoriesFetcher(appCtx, frontPageNumArticles)
 
 	go func() {
-		err := serverInputsToUserFetcher(appCtx, inputFilePath)
+		err := serverInputsToUserFetcher(appCtx, appStorage)
 		if err != nil {
 			log.Println(err)
 		}
@@ -473,10 +496,6 @@ func main() {
 	log.Println("clean up")
 	cleanup()
 	log.Println("clean up done")
-
-	// dump stories at the end
-	stories, _ := json.Marshal(app.lq.store)
-	log.Println(ioutil.WriteFile(outputFilePath, stories, 0644))
 
 	log.Println("END")
 }
