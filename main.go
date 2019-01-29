@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,13 +22,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// json inputs preferred over these
 const (
 	topStories           = "https://hacker-news.firebaseio.com/v0/topstories.json"
-	bestStories          = "https://hacker-news.firebaseio.com/v0/beststories.json"
 	storyLink            = "https://hacker-news.firebaseio.com/v0/item/%d.json"
 	hnPostLink           = "https://news.ycombinator.com/item?id=%d"
 	frontPageNumArticles = 30
-	hnPollTime           = 5 * time.Minute
+	hnPollTime           = 5 * 60 // 5 mintute
 	defaultPort          = 8080
 
 	rateLimit          = "5-M"
@@ -78,54 +77,16 @@ func (c change) String() string {
 var version string
 
 func main() {
-	var port int
-	// use PORT env else port
-	envPort := os.Getenv("PORT")
-	if envPort == "" {
-		port = defaultPort
-	} else {
-		var err error
-		port, err = strconv.Atoi(envPort)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	templateFile := os.Getenv("TMPL_PATH")
-	if templateFile == "" {
-		templateFile = "./index.html"
-	}
-
 	appStorage := os.Getenv("APP_STORAGE")
 	if appStorage == "" {
 		appStorage = "./app.json"
 	}
 
-	tmpl := template.New("index.html")
-	tmpl, err := tmpl.ParseFiles(templateFile)
-	if err != nil {
-		panic(err)
-	}
-
-	store := sim.NewStore()
-	// Define a limit rate to 5 requests per minute.
-	rate, err := limiter.NewRateFromFormatted(rateLimit)
-	if err != nil {
-		panic(err)
-	}
-
-	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
-
-	appCtx, cancel := context.WithCancel(context.Background())
-
-	errCh := make(chan appErr)
-	changeCh := make(chan change)
-
 	var x8h *app
 
 	storageFile, err := os.Open(appStorage)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
 	err = json.NewDecoder(storageFile).Decode(&x8h)
 	if err != nil {
@@ -142,8 +103,45 @@ func main() {
 		x8h = &app{
 			LimitQueue: queue,
 			VisitCount: 0,
+			Config: config{
+				Port:                 defaultPort,
+				TemplateFilePath:     "./index.html",
+				TopStoriesURL:        topStories,
+				StoryURL:             storyLink,
+				HNPostLink:           hnPostLink,
+				FrontPageNumArticles: frontPageNumArticles,
+				HNPollTime:           hnPollTime,
+				RateLimit:            rateLimit,
+				DeletionPeriod:       eightHrs,
+				HumanTrackingLimit:   humanTrackingLimit,
+				ItemFromFile:         itemFromFile,
+				ItemFromHN:           itemFromHN,
+			},
 		}
 	}
+
+	port := x8h.Config.Port
+	templateFile := x8h.Config.TemplateFilePath
+
+	tmpl := template.New("index.html")
+	tmpl, err = tmpl.ParseFiles(templateFile)
+	if err != nil {
+		panic(err)
+	}
+
+	store := sim.NewStore()
+	// Define a limit rate to 5 requests per minute.
+	rate, err := limiter.NewRateFromFormatted(x8h.Config.RateLimit)
+	if err != nil {
+		panic(err)
+	}
+
+	middleware := stdlib.NewMiddleware(limiter.New(store, rate, limiter.WithTrustForwardHeader(true)))
+
+	appCtx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan appErr)
+	changeCh := make(chan change)
 
 	defer func() {
 		// dump stories at the end
@@ -173,7 +171,7 @@ func main() {
 	}
 
 	fetchTopStories := func(ctx context.Context, limit int) ([]int, error) {
-		req, err := http.NewRequest(http.MethodGet, topStories, nil)
+		req, err := http.NewRequest(http.MethodGet, x8h.Config.TopStoriesURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +222,7 @@ func main() {
 		}
 		for _, it := range items {
 			if it.From == "" {
-				it.From = itemFromFile
+				it.From = x8h.Config.ItemFromFile
 			}
 
 			incomingItems <- it
@@ -234,7 +232,7 @@ func main() {
 	}
 
 	fetchItem := func(ctx context.Context, itemID int) (*item, error) {
-		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf(storyLink, itemID), nil)
+		req, err := http.NewRequest(http.MethodGet, fmt.Sprintf(x8h.Config.StoryURL, itemID), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -270,7 +268,7 @@ func main() {
 			if err != nil {
 				log.Println(err) // warning
 			} else {
-				item.From = itemFromHN
+				item.From = x8h.Config.ItemFromHN
 				incomingItems <- item
 			}
 		}
@@ -296,7 +294,7 @@ func main() {
 					}
 				}
 				if item.From != itemFromFile { // from file
-					item.DiscussLink = fmt.Sprintf(hnPostLink, item.ID)
+					item.DiscussLink = fmt.Sprintf(x8h.Config.HNPostLink, item.ID)
 				}
 
 				removedItemIfAny := x8h.LimitQueue.add(item)
@@ -318,7 +316,7 @@ func main() {
 	}
 
 	storyRemover := func(ctx context.Context) error {
-		topItems, err := fetchTopStories(ctx, frontPageNumArticles)
+		topItems, err := fetchTopStories(ctx, x8h.Config.FrontPageNumArticles)
 		if err != nil {
 			return err
 		}
@@ -345,7 +343,7 @@ func main() {
 				stillAtTop = false
 			}
 
-			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)).Seconds() > eightHrs {
+			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)) > x8h.Config.DeletionPeriod*time.Second {
 				// send these to removed chan
 				changeCh <- change{
 					Action: changeRemove,
@@ -415,7 +413,7 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, os.Kill)
 
-	intervalTicker := time.NewTicker(hnPollTime)
+	intervalTicker := time.NewTicker(x8h.Config.HNPollTime * time.Second)
 
 	go func() {
 		for range intervalTicker.C {
@@ -423,7 +421,7 @@ func main() {
 			eg, ctx := errgroup.WithContext(appCtx)
 			eg.Go(func() error {
 				log.Println("starting top stories fetcher")
-				return topStoriesFetcher(ctx, frontPageNumArticles)
+				return topStoriesFetcher(ctx, x8h.Config.FrontPageNumArticles)
 			})
 			eg.Go(func() error {
 				log.Println("starting file stories fetcher")
@@ -450,7 +448,7 @@ func main() {
 	go changeLogger()
 
 	log.Println("starting top stories fetcher")
-	go topStoriesFetcher(appCtx, frontPageNumArticles)
+	go topStoriesFetcher(appCtx, x8h.Config.FrontPageNumArticles)
 
 	go func() {
 		err := serverInputsToUserFetcher(appCtx, appStorage)
