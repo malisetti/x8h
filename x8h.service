@@ -1,14 +1,13 @@
 [Unit]
 Description=x8h daemon
-After=network.
+After=network.target
 
 [Service]
 ExecStart=/home/abbiya/x8h
 Restart=on-failure
 Environment="PORT=80"
 Environment="TMPL_PATH=/home/abbiya/index.html"
-Environment="INPUT_PATH=/home/abbiya/input.json"
-Environment="OUTPUT_PATH=/home/abbiya/output.json"
+Environment="APP_STORAGE=/home/abbiya/app.json"
 
 [Install]
 WantedBy=default.target
