@@ -221,9 +221,7 @@ func main() {
 			return err
 		}
 		for _, it := range items {
-			if it.From == "" {
-				it.From = x8h.Config.ItemFromFile
-			}
+			it.From = x8h.Config.ItemFromFile
 
 			incomingItems <- it
 		}
@@ -338,7 +336,7 @@ func main() {
 					}
 				}
 			case itemFromFile:
-				stillAtTop = false // should remove anything from file after 8hrs
+				stillAtTop = false // will remove anything from file after 8hrs
 			default:
 				stillAtTop = false
 			}
