@@ -1,0 +1,22 @@
+{
+	"config": {
+		"port": 8080,
+		"templateFilePath": "/home/abbiya/index.html",
+		"topStoriesUrl": "https://hacker-news.firebaseio.com/v0/topstories.json",
+		"storyUrl": "https://hacker-news.firebaseio.com/v0/item/%d.json",
+		"hnPostLink": "https://news.ycombinator.com/item?id=%d",
+		"frontPageNumArticles": 30,
+		"hnPollTime": 300,
+		"rateLimit": "5-M",
+		"deletionPeriod": 28800,
+		"humanTrackingLimit": 300,
+		"itemFromFile": "file",
+		"itemFromHN": "hn"
+	},
+	"limitQueue": {
+		"limit": 300,
+		"keys": [],
+		"store": {}
+	},
+	"visitCount": 0
+}
