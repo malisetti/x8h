@@ -29,7 +29,7 @@ const (
 	storyLink            = "https://hacker-news.firebaseio.com/v0/item/%d.json"
 	hnPostLink           = "https://news.ycombinator.com/item?id=%d"
 	frontPageNumArticles = 30
-	hnPollTime           = 1 * time.Minute
+	hnPollTime           = 5 * time.Minute
 	defaultPort          = 8080
 
 	rateLimit          = "5-M"
