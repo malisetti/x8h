@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -281,7 +283,10 @@ func main() {
 				x8h.Lock()
 				defer x8h.Unlock()
 
-				if item.Added == 0 {
+				previousItem, ok := x8h.LimitQueue.Store[item.ID]
+				if ok {
+					item.Added = previousItem.Added
+				} else if item.Added == 0 {
 					item.Added = unixTime(time.Now().Unix())
 				}
 				if item.Domain == "" {
@@ -292,7 +297,7 @@ func main() {
 						log.Println(err)
 					}
 				}
-				if item.From != itemFromFile { // from file
+				if item.From != itemFromFile { // from hn
 					item.DiscussLink = fmt.Sprintf(x8h.Config.HNPostLink, item.ID)
 				}
 
@@ -385,23 +390,33 @@ func main() {
 		log.Println(realIP(r))
 		log.Println(r.UserAgent())
 
-		x8h.Lock()
-		defer x8h.Unlock()
-
 		data := make(map[string]interface{})
+
+		x8h.Lock()
+
 		data["Data"] = x8h.LimitQueue.Store
-
 		x8h.VisitCount++
-
 		data["Visits"] = x8h.VisitCount
 		data["Version"] = version
 
-		err = tmpl.Execute(w, data)
+		var buf bytes.Buffer
+		err = tmpl.Execute(&buf, data)
+
+		x8h.Unlock()
+
 		if err != nil {
 			errCh <- appErr{
 				err:   err,
 				level: logFatal,
 			}
+
+			fmt.Fprintf(w, "error: %v", err)
+			return
+		}
+		_, err = io.Copy(w, &buf)
+		if err != nil {
+			log.Println(err)
+			fmt.Fprintf(w, "error: %v", err)
 		}
 		return
 	})))
