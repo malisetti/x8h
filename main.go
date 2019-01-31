@@ -391,18 +391,18 @@ func main() {
 		log.Println(r.UserAgent())
 
 		data := make(map[string]interface{})
-
-		x8h.Lock()
-
-		data["Data"] = x8h.LimitQueue.Store
-		x8h.VisitCount++
-		data["Visits"] = x8h.VisitCount
-		data["Version"] = version
-
 		var buf bytes.Buffer
-		err = tmpl.Execute(&buf, data)
 
-		x8h.Unlock()
+		func() {
+			x8h.Lock()
+			defer x8h.Unlock()
+
+			data["Data"] = x8h.LimitQueue.Store
+			x8h.VisitCount++
+			data["Visits"] = x8h.VisitCount
+			data["Version"] = version
+			err = tmpl.Execute(&buf, data)
+		}()
 
 		if err != nil {
 			errCh <- appErr{
