@@ -46,6 +46,9 @@ type changeAction string
 const (
 	changeAdd    changeAction = "added"
 	changeRemove              = "removed"
+
+	devMode  appMode = "dev"
+	prodMode         = "prod"
 )
 
 type logLevel string
@@ -67,7 +70,6 @@ func (ae appErr) Error() string {
 }
 
 type unixTime int64
-
 type change struct {
 	Action changeAction
 	Item   *item
@@ -107,6 +109,7 @@ func main() {
 			LimitQueue: queue,
 			VisitCount: 0,
 			Config: config{
+				Mode:                 devMode,
 				Port:                 defaultPort,
 				TemplateFilePath:     "./index.html",
 				TopStoriesURL:        topStories,
@@ -120,6 +123,12 @@ func main() {
 				ItemFromFile:         itemFromFile,
 				ItemFromHN:           itemFromHN,
 			},
+		}
+	} else {
+		for _, it := range x8h.LimitQueue.Store {
+			if it.Added == 0 {
+				it.Added = unixTime(time.Now().Unix())
+			}
 		}
 	}
 
@@ -146,15 +155,18 @@ func main() {
 	errCh := make(chan appErr)
 	changeCh := make(chan change)
 
-	defer func() {
+	dumpApp := func() error {
+		x8h.Lock()
+		defer x8h.Unlock()
 		// dump stories at the end
-		appDump, err := json.Marshal(x8h)
+		appDump, err := json.MarshalIndent(x8h, "", "  ")
 		if err != nil {
-			log.Println(err)
-			return
+			return err
 		}
-		log.Println(ioutil.WriteFile(appStorage, appDump, 0644))
-	}()
+		return ioutil.WriteFile(appStorage, appDump, 0644)
+	}
+
+	defer dumpApp()
 
 	incomingItems := make(chan *item)
 
@@ -213,7 +225,9 @@ func main() {
 		}
 		var items []*item
 		for _, it := range dump.LimitQueue.Store {
-			items = append(items, it)
+			if it.From == "" || it.From == itemFromFile {
+				items = append(items, it)
+			}
 		}
 		return items, nil
 	}
@@ -224,7 +238,13 @@ func main() {
 			return err
 		}
 		for _, it := range items {
-			it.From = x8h.Config.ItemFromFile
+			if it.From == "" {
+				it.From = x8h.Config.ItemFromFile
+			}
+
+			if it.Added == 0 {
+				it.Added = unixTime(time.Now().Unix())
+			}
 
 			incomingItems <- it
 		}
@@ -286,11 +306,10 @@ func main() {
 				previousItem, ok := x8h.LimitQueue.Store[item.ID]
 				if ok {
 					item.Added = previousItem.Added
-
-				}
-				if item.Added == 0 {
+				} else if item.Added == 0 {
 					item.Added = unixTime(time.Now().Unix())
 				}
+
 				if item.Domain == "" {
 					domain, err := urlToDomain(item.URL)
 					if err == nil {
@@ -350,12 +369,12 @@ func main() {
 			}
 
 			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)) > x8h.Config.DeletionPeriod*time.Second {
+				it := x8h.LimitQueue.remove(id)
 				// send these to removed chan
 				changeCh <- change{
 					Action: changeRemove,
-					Item:   x8h.LimitQueue.Store[id],
+					Item:   it,
 				}
-				x8h.LimitQueue.remove(id)
 			}
 		}
 		return nil
@@ -447,6 +466,10 @@ func main() {
 				log.Println("starting story remover")
 				return storyRemover(ctx)
 			})
+			eg.Go(func() error {
+				log.Println("dumping the app")
+				return dumpApp()
+			})
 			err := eg.Wait()
 			if err != nil {
 				errCh <- appErr{
@@ -463,18 +486,20 @@ func main() {
 	log.Println("starting change logger")
 	go changeLogger()
 
-	log.Println("starting top stories fetcher")
-	go topStoriesFetcher(appCtx, x8h.Config.FrontPageNumArticles)
+	log.Println("starting story lister")
+	go storyLister(appCtx)
 
 	go func() {
+		log.Println("starting top stories fetcher")
 		err := serverInputsToUserFetcher(appCtx, appStorage)
 		if err != nil {
 			log.Println(err)
 		}
+		err = topStoriesFetcher(appCtx, x8h.Config.FrontPageNumArticles)
+		if err != nil {
+			log.Println(err)
+		}
 	}()
-
-	log.Println("starting story lister")
-	go storyLister(appCtx)
 
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port)}
 

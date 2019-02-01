@@ -5,7 +5,9 @@ import (
 	"time"
 )
 
+type appMode string
 type config struct {
+	Mode                 appMode       `json:"mode"`
 	Port                 int           `json:"port"`
 	TemplateFilePath     string        `json:"templateFilePath"`
 	TopStoriesURL        string        `json:"topStoriesUrl"`
