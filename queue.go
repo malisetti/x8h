@@ -7,17 +7,11 @@ type limitQueue struct {
 }
 
 func (lm *limitQueue) add(i *item) *item {
-	var exists bool
-	var existsAt int
 	for pos, id := range lm.Keys {
 		if id == i.ID {
-			exists = true
-			existsAt = pos
+			lm.Keys = append(lm.Keys[:pos], lm.Keys[pos+1:]...)
 			break
 		}
-	}
-	if exists {
-		lm.Keys = append(lm.Keys[:existsAt], lm.Keys[existsAt+1:]...)
 	}
 
 	lm.Keys = append(lm.Keys, i.ID)
