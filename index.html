@@ -23,6 +23,10 @@
       color: #888;
       text-decoration: none;
     }
+    .readable{
+      text-decoration: none;
+      border-bottom: 1px solid black;
+    }
   </style>
 </head>
 
@@ -32,7 +36,7 @@
   </header>
   
   <main>
-      <ul class="list">
+      <ol class="list">
           {{ range $key, $item := .Data }}
           <li>
             {{ if $item.Deleted }}
@@ -41,9 +45,9 @@
               <s>
             {{ end }}
                 {{ if eq $item.URL "" }}
-                <a target="_blank" href="{{ $item.DiscussLink }}">{{ $item.Title }}</a>
+                <a class="readable" target="_blank" href="{{ $item.DiscussLink }}">{{ $item.Title }}</a>
                 {{ else }}
-                <a target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> <a target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
+                <a class="readable" target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> <a class="readable" target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
                 {{ end }}
             {{ if $item.Deleted }}
               </del>
@@ -52,13 +56,12 @@
             {{ end }}
           </li>
           {{ end }}
-        </ul>
+        </ol>
   </main>
 
   <footer>
     <ul id="footer-info">
       <li>Visits : {{ .Visits }} |</li>
-      <li>Links : {{ len .Data }} |</li>
       <li>Version : {{ .Version }} |</li>
       <li><a href="https://twitter.com/seshnsesh" target="_blank">Contact</a></li>
     </ul>
