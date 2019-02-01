@@ -286,7 +286,7 @@ func main() {
 				previousItem, ok := x8h.LimitQueue.Store[item.ID]
 				if ok {
 					item.Added = previousItem.Added
-				} else if item.Added == 0 {
+				} else {
 					item.Added = unixTime(time.Now().Unix())
 				}
 				if item.Domain == "" {
