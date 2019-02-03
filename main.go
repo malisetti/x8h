@@ -297,6 +297,39 @@ func main() {
 		return nil
 	}
 
+	existingItemsUpdater := func(ctx context.Context, limit int) error {
+		itemIds, err := fetchTopStories(ctx, limit)
+		if err != nil {
+			return err
+		}
+		var olderItems []int
+		func() {
+			x8h.Lock()
+			defer x8h.Unlock()
+			for ID := range itemIds {
+				if _, ok := x8h.LimitQueue.Store[ID]; !ok {
+					olderItems = append(olderItems, ID)
+				}
+			}
+		}()
+
+		for _, ID := range olderItems {
+			if appCtx.Err() != nil {
+				return nil
+			}
+
+			item, err := fetchItem(ctx, ID)
+			if err != nil {
+				log.Println(err) // warning
+			} else {
+				item.From = x8h.Config.ItemFromHN
+				incomingItems <- item
+			}
+		}
+
+		return nil
+	}
+
 	storyLister := func(ctx context.Context) {
 		for item := range incomingItems {
 			func() {
@@ -454,6 +487,9 @@ func main() {
 		for range intervalTicker.C {
 			log.Println("starting ticker ticker")
 			eg, ctx := errgroup.WithContext(appCtx)
+			eg.Go(func() error {
+				return existingItemsUpdater(appCtx, x8h.Config.FrontPageNumArticles)
+			})
 			eg.Go(func() error {
 				log.Println("starting top stories fetcher")
 				return topStoriesFetcher(ctx, x8h.Config.FrontPageNumArticles)
