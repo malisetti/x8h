@@ -306,14 +306,14 @@ func main() {
 		func() {
 			x8h.Lock()
 			defer x8h.Unlock()
-			for ID := range itemIds {
+			for _, ID := range itemIds {
 				if _, ok := x8h.LimitQueue.Store[ID]; !ok {
 					olderItems = append(olderItems, ID)
 				}
 			}
 		}()
 
-		for ID := range olderItems {
+		for _, ID := range olderItems {
 			if appCtx.Err() != nil {
 				return nil
 			}
