@@ -313,7 +313,7 @@ func main() {
 			}
 		}()
 
-		for _, ID := range olderItems {
+		for ID := range olderItems {
 			if appCtx.Err() != nil {
 				return nil
 			}
