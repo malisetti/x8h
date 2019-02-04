@@ -110,6 +110,7 @@ func main() {
 			VisitCount: 0,
 			Config: config{
 				Mode:                 devMode,
+				LogChanges:           false,
 				Port:                 defaultPort,
 				TemplateFilePath:     "./index.html",
 				TopStoriesURL:        topStories,
@@ -415,7 +416,9 @@ func main() {
 
 	changeLogger := func() {
 		for c := range changeCh {
-			log.Println(c)
+			if x8h.Config.LogChanges {
+				log.Println(c)
+			}
 		}
 	}
 
@@ -441,6 +444,12 @@ func main() {
 	}
 
 	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// log CF- headers
+		for h, v := range r.Header {
+			if strings.HasPrefix(h, "CF-") {
+				log.Printf("%s : %s\n", strings.Replace(h, "CF-", "", -1), strings.Join(v, " "))
+			}
+		}
 		log.Println(realIP(r))
 		log.Println(r.UserAgent())
 

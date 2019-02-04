@@ -8,6 +8,7 @@ import (
 type appMode string
 type config struct {
 	Mode                 appMode       `json:"mode"`
+	LogChanges           bool          `json:"logChanges"`
 	Port                 int           `json:"port"`
 	TemplateFilePath     string        `json:"templateFilePath"`
 	TopStoriesURL        string        `json:"topStoriesUrl"`
