@@ -446,6 +446,7 @@ func main() {
 	http.Handle("/", middleware.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// log CF- headers
 		for h, v := range r.Header {
+			h = strings.ToUpper(h) // headers are case insensitive
 			if strings.HasPrefix(h, "CF-") {
 				log.Printf("%s : %s\n", strings.Replace(h, "CF-", "", -1), strings.Join(v, " "))
 			}
