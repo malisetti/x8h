@@ -8,142 +8,119 @@
 
   <title>8hrs | Tech, News</title>
   <style>
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
-        line-height: 1.5;
-        font-size: 1em;
-        margin: 10px;
-        -webkit-text-size-adjust: 100%;
-      }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+      line-height: 1.5;
+      font-size: 1em;
+      margin: 10px;
+      -webkit-text-size-adjust: 100%;
+    }
 
-      .night-mode {
-        background-color: black;
-      }
+    .list li {
+      padding: 3px;
+    }
 
-      .night-mode h1 {
-        color:red;
-      }
+    #footer-info li {
+      display: inline;
+    }
 
-      .night-mode ol{
-        color:red;
-      }
+    .domain {
+      color: burlywood;
+      font-weight: normal;
+    }
 
-      .night-mode .list li {
-        padding: 3px;
-      }
+    .discuss {
+      color: grey;
+      text-decoration: none;
+    }
 
-      #footer-info li {
-        display: inline;
-      }
-      .night-mode .domain {
-        color: burlywood;
-        font-weight: normal;
-      }
-      .night-mode .discuss {
-        color: #888;
-        text-decoration: none;
-      }
-      .night-mode .readable {
-        color:orange;
-        text-decoration: none;
-        border-bottom: 1px solid #888;
-      }
-      .night-mode .night-mode-span{
-        color:red;        
-      }
+    .night-mode {
+      background-color:rgb(25, 20, 20);
+    }
 
-      .night-mode-span{
-        cursor: pointer;
-      }
+    .night-mode h1 {
+      color: orangered;
+    }
 
-      .normal-mode .list li {
-        padding: 3px;
-      }      
+    .night-mode ol {
+      color:orangered;
+    }
 
-      .night-mode #footer-info li {
-        display: inline;
-        color:red;
-      }
-      .normal-mode .domain {
-        color: burlywood;
-        font-weight: normal;
-      }
-      .normal-mode .discuss {
-        color: #888;
-        text-decoration: none;
-      }
-      .normal-mode .readable {
-        text-decoration: none;
-        border-bottom: 1px solid black;
-      }
+    .night-mode .readable {
+      text-decoration: none;
+      border-bottom: 1px solid gray;
+      color: orange;
+    }
 
-      .normal-mode .night-mode-span{
-        color:black;
-      }
-    </style>
+    .normal-mode .readable {
+      text-decoration: none;
+      border-bottom: 1px solid black;
+    }
+
+    .night-mode #footer-info li {
+      display: inline;
+      color:orangered;
+    }
+  </style>
 
 </head>
 
 <body>
-  <div id="content-div">
-      <header>
-          <h1>Tech News - Past 8hrs</h1>
-      </header>
-      
-      <main>
-          <ol class="list">
-              {{ range $key, $item := .Data }}
-              <li>
-                {{ if $item.Deleted }}
-                  <del>
-                {{ else if $item.Dead }}
-                  <s>
-                {{ end }}
-                    {{ if eq $item.URL "" }}
-                    <a class="readable" target="_blank" href="{{ $item.DiscussLink }}">{{ $item.Title }}</a>
-                    {{ else }}
-                    <a class="readable" target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> <a class="readable" target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
-                    {{ end }}
-                {{ if $item.Deleted }}
-                  </del>
-                {{ else if $item.Dead }}
-                  </s>
-                {{ end }}
-              </li>
-              {{ end }}
-            </ol>
-      </main>
-    
-      <footer>
-        <ul id="footer-info">
-          <li>Visits : {{ .Visits }} |</li>
-          <li>Version : {{ .Version }} |</li>
-          <li><a href="https://twitter.com/seshnsesh" target="_blank">Contact </a><span> | </span></li>
-          <li id="mode-span-label" class="night-mode-span" onclick="swichNightMode()"> Night Mode</li>
-        </ul>
-      </footer>
-  </div>
-  
+  <header>
+    <h1>Tech News - Past 8hrs</h1>
+  </header>
+
+  <main>
+    <ol class="list">
+      {{ range $key, $item := .Data }}
+      <li>
+        {{ if $item.Deleted }}
+        <del>
+          {{ else if $item.Dead }}
+          <s>
+            {{ end }}
+            {{ if eq $item.URL "" }}
+            <a class="readable" target="_blank" href="{{ $item.DiscussLink }}">{{ $item.Title }}</a>
+            {{ else }}
+            <a class="readable" target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a>
+            {{ if ne $item.DiscussLink ""}}
+            <a class="readable" target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
+            {{ end }}
+            {{ end }}
+            {{ if $item.Deleted }}
+        </del>
+        {{ else if $item.Dead }}
+        </s>
+        {{ end }}
+      </li>
+      {{ end }}
+    </ol>
+  </main>
+
+  <footer>
+    <ul id="footer-info">
+      <li>Visits : {{ .Visits }} |</li>
+      <li>Version : {{ .Version }} |</li>
+      <li id="theme-switcher">Orange Theme |</li>
+      <li><a href="https://twitter.com/seshnsesh" target="_blank">Contact</a></li>
+    </ul>
+  </footer>
+
   <script>
-    var nightMode = false;
-    var swichNightMode = function(){
-let contentDiv = document.getElementById("content-div");
-if(contentDiv){
-  if(nightMode){
-    contentDiv.className = "normal-mode";  
-    let modeLabel = document.getElementById("mode-span-label");
-    modeLabel.innerHTML = "Night Mode";
-    nightMode = false;
-  }else{
-    contentDiv.className = "night-mode"; 
-    let modeLabel = document.getElementById("mode-span-label");
-    modeLabel.innerHTML = "Normal Mode";
-    nightMode = true;
-  }
-}
+    const themeSwitcher = document.getElementById("theme-switcher");
+    let nightMode = false;
+    themeSwitcher.onclick = function (e) {
+      if (nightMode) {
+        document.body.className = "normal-mode";
+        themeSwitcher.innerHTML = "Orange Theme |";
+        nightMode = false;
+      } else {
+        document.body.className = "night-mode";
+        themeSwitcher.innerHTML = "Blue Theme |";
+        nightMode = true;
+      }
     }
-    
   </script>
 </body>
 
