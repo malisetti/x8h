@@ -451,7 +451,11 @@ func main() {
 					status = strings.TrimSpace(status)
 					tweet, err := twapi.PostTweet(status, nil)
 					if err == nil {
-						c.Item.TweetID = tweet.Id
+						func() {
+							x8h.Lock()
+							defer x8h.Unlock()
+							c.Item.TweetID = tweet.Id
+						}()
 						log.Println("tweeted")
 					} else {
 						log.Println(err)
