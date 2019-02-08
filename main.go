@@ -446,7 +446,11 @@ func main() {
 			if x8h.Config.TweetChanges {
 				switch c.Action {
 				case changeAdd:
-					status := fmt.Sprintf(tweetStatus, c.Item.Title, c.Item.URL)
+					link := c.Item.URL
+					if link == "" {
+						link = c.Item.DiscussLink
+					}
+					status := fmt.Sprintf(tweetStatus, c.Item.Title, link)
 					status = hnReplacer.Replace(status)
 					status = strings.TrimSpace(status)
 					tweet, err := twapi.PostTweet(status, nil)
