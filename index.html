@@ -27,10 +27,48 @@
       text-decoration: none;
       border-bottom: 1px solid black;
     }
+    .dark-mode {
+      background-color:rgb(25, 20, 20);
+    }
+    .dark-mode a {
+      color: orangered;
+      text-decoration: none;
+      border-bottom: 1px solid gray;
+    }
+    .dark-mode a link{
+      color: black;
+    }
+    .dark-mode h1 {
+      color: orangered;
+    }
+    .dark-mode ol {
+      color:orangered;
+    }
+    .dark-mode .readable {
+      text-decoration: none;
+      border-bottom: 1px solid gray;
+      color: orange;
+    }
+    .normal-mode .readable {
+      text-decoration: none;
+      border-bottom: 1px solid black;
+    }
+    .dark-mode #footer-info li {
+      display: inline;
+      color:orangered;
+    }
   </style>
+  <script>
+    function light(){
+      body.className='normal-mode';
+    }
+    function dark(){
+      body.className='dark-mode';
+    }
+  </script>
 </head>
 
-<body>
+<body id="body">
   <header>
       <h1>Tech News - Past 8hrs</h1>
   </header>
@@ -61,8 +99,13 @@
 
   <footer>
     <ul id="footer-info">
-      <li>Visits : {{ .Visits }} |</li>
-      <li>Version : {{ .Version }} |</li>
+      <li>
+        <div class="container">
+          <span>Theme: </span>
+          <a href="javascript:dark()">Dark</a>
+          <a href="javascript:light()">Light</a>
+        </div>
+      </li>
       <li><a href="https://twitter.com/seshnsesh" target="_blank">Contact</a></li>
     </ul>
   </footer>
