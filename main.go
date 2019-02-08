@@ -162,8 +162,6 @@ func main() {
 	changes := make(chan change)
 
 	appDumper := func() error {
-		x8h.Lock()
-		defer x8h.Unlock()
 		// dump stories at the end
 		appDump, err := json.MarshalIndent(x8h, "", "  ")
 		if err != nil {
@@ -309,22 +307,18 @@ func main() {
 			return err
 		}
 		var olderItems []int
-		func() {
-			x8h.Lock()
-			defer x8h.Unlock()
-			for ID := range x8h.LimitQueue.Store {
-				exists := false
-				for _, id := range itemIds {
-					if id == ID {
-						exists = true
-						break
-					}
-				}
-				if !exists {
-					olderItems = append(olderItems, ID)
+		for ID := range x8h.LimitQueue.Store {
+			exists := false
+			for _, id := range itemIds {
+				if id == ID {
+					exists = true
+					break
 				}
 			}
-		}()
+			if !exists {
+				olderItems = append(olderItems, ID)
+			}
+		}
 
 		for _, ID := range olderItems {
 			if appCtx.Err() != nil {
@@ -345,29 +339,29 @@ func main() {
 
 	storyLister := func(ctx context.Context) {
 		for item := range incomingItems {
+
+			previousItem, ok := x8h.LimitQueue.Store[item.ID]
+			if ok {
+				item.Added = previousItem.Added
+			} else if item.Added == 0 {
+				item.Added = unixTime(time.Now().Unix())
+			}
+
+			if item.Domain == "" {
+				domain, err := urlToDomain(item.URL)
+				if err == nil {
+					item.Domain = domain
+				} else {
+					log.Println(err)
+				}
+			}
+			if item.From != itemFromFile { // from hn
+				item.DiscussLink = fmt.Sprintf(x8h.Config.HNPostLink, item.ID)
+			}
+
 			func() {
 				x8h.Lock()
 				defer x8h.Unlock()
-
-				previousItem, ok := x8h.LimitQueue.Store[item.ID]
-				if ok {
-					item.Added = previousItem.Added
-				} else if item.Added == 0 {
-					item.Added = unixTime(time.Now().Unix())
-				}
-
-				if item.Domain == "" {
-					domain, err := urlToDomain(item.URL)
-					if err == nil {
-						item.Domain = domain
-					} else {
-						log.Println(err)
-					}
-				}
-				if item.From != itemFromFile { // from hn
-					item.DiscussLink = fmt.Sprintf(x8h.Config.HNPostLink, item.ID)
-				}
-
 				replaced, removedItemIfAny := x8h.LimitQueue.add(item)
 
 				if !replaced {
@@ -380,7 +374,6 @@ func main() {
 				if removedItemIfAny != nil {
 					log.Println(removedItemIfAny)
 				}
-
 			}()
 		}
 	}
@@ -395,8 +388,6 @@ func main() {
 			}
 		}
 
-		x8h.Lock()
-		defer x8h.Unlock()
 		for id, it := range x8h.LimitQueue.Store {
 			if ctx.Err() != nil {
 				return nil
@@ -418,14 +409,18 @@ func main() {
 			}
 
 			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)) > x8h.Config.DeletionPeriod*time.Second {
-				it := x8h.LimitQueue.remove(id)
-				if it != nil {
-					// send these to removed chan
-					changes <- change{
-						Action: changeRemove,
-						Item:   it,
+				func() {
+					x8h.Lock()
+					defer x8h.Unlock()
+					it := x8h.LimitQueue.remove(id)
+					if it != nil {
+						// send these to removed chan
+						changes <- change{
+							Action: changeRemove,
+							Item:   it,
+						}
 					}
-				}
+				}()
 			}
 		}
 		return nil
@@ -455,11 +450,7 @@ func main() {
 					status = strings.TrimSpace(status)
 					tweet, err := twapi.PostTweet(status, nil)
 					if err == nil {
-						func() {
-							x8h.Lock()
-							defer x8h.Unlock()
-							c.Item.TweetID = tweet.Id
-						}()
+						c.Item.TweetID = tweet.Id
 						log.Println("tweeted")
 					} else {
 						log.Println(err)
@@ -518,13 +509,13 @@ func main() {
 		func() {
 			x8h.Lock()
 			defer x8h.Unlock()
-
-			data["Data"] = x8h.LimitQueue.Store
 			x8h.VisitCount++
-			data["Visits"] = x8h.VisitCount
-			data["Version"] = version
-			err = tmpl.Execute(&buf, data)
 		}()
+
+		data["Data"] = x8h.LimitQueue.Store
+		data["Visits"] = x8h.VisitCount
+		data["Version"] = version
+		err = tmpl.Execute(&buf, data)
 
 		if err != nil {
 			errCh <- appErr{

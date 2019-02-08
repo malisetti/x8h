@@ -32,7 +32,7 @@ type config struct {
 }
 type app struct {
 	Config config `json:"config"`
-	sync.Mutex
+	sync.RWMutex
 	LimitQueue *limitQueue `json:"limitQueue"`
 	VisitCount int         `json:"visitCount"`
 }
