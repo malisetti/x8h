@@ -47,7 +47,10 @@
                 {{ if eq $item.URL "" }}
                 <a class="readable" target="_blank" href="{{ $item.DiscussLink }}">{{ $item.Title }}</a>
                 {{ else }}
-                <a class="readable" target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> <a class="readable" target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
+                <a class="readable" target="_blank" href="{{ $item.URL }}">{{ $item.Title }} <span class="domain">({{ $item.Domain }})</span></a> 
+                {{ if ne $item.DiscussLink "" }}
+                <a class="readable" target="_blank" href="{{ $item.DiscussLink }}"><i class="discuss">discuss</i></a>
+                {{ end }}
                 {{ end }}
             {{ if $item.Deleted }}
               </del>

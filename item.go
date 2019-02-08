@@ -15,4 +15,6 @@ type item struct {
 	Added    unixTime `json:"added"`
 	RemoveAt unixTime `json:"removeAt"`
 	Domain   string   `json:"domain"`
+
+	TweetID int64 `json:"tweetID"`
 }

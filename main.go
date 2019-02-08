@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ChimeraCoder/anaconda"
 	"github.com/ulule/limiter/v3"
 	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
 	sim "github.com/ulule/limiter/v3/drivers/store/memory"
@@ -109,20 +110,24 @@ func main() {
 			LimitQueue: queue,
 			VisitCount: 0,
 			Config: config{
-				Mode:                 devMode,
-				LogChanges:           false,
-				Port:                 defaultPort,
-				TemplateFilePath:     "./index.html",
-				TopStoriesURL:        topStories,
-				StoryURL:             storyLink,
-				HNPostLink:           hnPostLink,
-				FrontPageNumArticles: frontPageNumArticles,
-				HNPollTime:           hnPollTime,
-				RateLimit:            rateLimit,
-				DeletionPeriod:       eightHrs,
-				HumanTrackingLimit:   humanTrackingLimit,
-				ItemFromFile:         itemFromFile,
-				ItemFromHN:           itemFromHN,
+				Mode:                        devMode,
+				LogChanges:                  false,
+				TweetChanges:                false,
+				ReadFromFile:                true,
+				ReadFromHN:                  true,
+				CheckFrontPageBeforeRemoval: true,
+				Port:                        defaultPort,
+				TemplateFilePath:            "./index.html",
+				TopStoriesURL:               topStories,
+				StoryURL:                    storyLink,
+				HNPostLink:                  hnPostLink,
+				FrontPageNumArticles:        frontPageNumArticles,
+				HNPollTime:                  hnPollTime,
+				RateLimit:                   rateLimit,
+				DeletionPeriod:              eightHrs,
+				HumanTrackingLimit:          humanTrackingLimit,
+				ItemFromFile:                itemFromFile,
+				ItemFromHN:                  itemFromHN,
 			},
 		}
 	} else {
@@ -154,9 +159,9 @@ func main() {
 	appCtx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan appErr)
-	changeCh := make(chan change)
+	changes := make(chan change)
 
-	dumpApp := func() error {
+	appDumper := func() error {
 		x8h.Lock()
 		defer x8h.Unlock()
 		// dump stories at the end
@@ -167,7 +172,7 @@ func main() {
 		return ioutil.WriteFile(appStorage, appDump, 0644)
 	}
 
-	defer dumpApp()
+	defer appDumper()
 
 	incomingItems := make(chan *item)
 
@@ -186,7 +191,7 @@ func main() {
 		return r.Replace(u.Hostname()), nil
 	}
 
-	fetchTopStories := func(ctx context.Context, limit int) ([]int, error) {
+	fetchTopHNStories := func(ctx context.Context, limit int) ([]int, error) {
 		req, err := http.NewRequest(http.MethodGet, x8h.Config.TopStoriesURL, nil)
 		if err != nil {
 			return nil, err
@@ -277,7 +282,7 @@ func main() {
 
 	topStoriesFetcher := func(ctx context.Context, limit int) error {
 		// send items
-		itemIds, err := fetchTopStories(ctx, limit)
+		itemIds, err := fetchTopHNStories(ctx, limit)
 		if err != nil {
 			return err
 		}
@@ -298,8 +303,8 @@ func main() {
 		return nil
 	}
 
-	existingItemsUpdater := func(ctx context.Context, limit int) error {
-		itemIds, err := fetchTopStories(ctx, limit)
+	existingHNItemsUpdater := func(ctx context.Context, limit int) error {
+		itemIds, err := fetchTopHNStories(ctx, limit)
 		if err != nil {
 			return err
 		}
@@ -307,8 +312,15 @@ func main() {
 		func() {
 			x8h.Lock()
 			defer x8h.Unlock()
-			for _, ID := range itemIds {
-				if _, ok := x8h.LimitQueue.Store[ID]; !ok {
+			for ID := range x8h.LimitQueue.Store {
+				exists := false
+				for _, id := range itemIds {
+					if id == ID {
+						exists = true
+						break
+					}
+				}
+				if !exists {
 					olderItems = append(olderItems, ID)
 				}
 			}
@@ -356,18 +368,17 @@ func main() {
 					item.DiscussLink = fmt.Sprintf(x8h.Config.HNPostLink, item.ID)
 				}
 
-				removedItemIfAny := x8h.LimitQueue.add(item)
+				replaced, removedItemIfAny := x8h.LimitQueue.add(item)
 
-				if removedItemIfAny != nil {
-					changeCh <- change{
-						Action: changeRemove,
-						Item:   removedItemIfAny,
+				if !replaced {
+					changes <- change{
+						Action: changeAdd,
+						Item:   item,
 					}
 				}
 
-				changeCh <- change{
-					Action: changeAdd,
-					Item:   item,
+				if removedItemIfAny != nil {
+					log.Println(removedItemIfAny)
 				}
 
 			}()
@@ -375,9 +386,13 @@ func main() {
 	}
 
 	storyRemover := func(ctx context.Context) error {
-		topItems, err := fetchTopStories(ctx, x8h.Config.FrontPageNumArticles)
-		if err != nil {
-			return err
+		var topItems []int
+		if x8h.Config.CheckFrontPageBeforeRemoval {
+			var err error
+			topItems, err = fetchTopHNStories(ctx, x8h.Config.FrontPageNumArticles)
+			if err != nil {
+				return err
+			}
 		}
 
 		x8h.Lock()
@@ -404,10 +419,12 @@ func main() {
 
 			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)) > x8h.Config.DeletionPeriod*time.Second {
 				it := x8h.LimitQueue.remove(id)
-				// send these to removed chan
-				changeCh <- change{
-					Action: changeRemove,
-					Item:   it,
+				if it != nil {
+					// send these to removed chan
+					changes <- change{
+						Action: changeRemove,
+						Item:   it,
+					}
 				}
 			}
 		}
@@ -415,9 +432,42 @@ func main() {
 	}
 
 	changeLogger := func() {
-		for c := range changeCh {
+		var twapi *anaconda.TwitterApi
+		if x8h.Config.TweetChanges {
+			twapi = anaconda.NewTwitterApiWithCredentials(x8h.Config.TwAccessToken, x8h.Config.TwAccessTokenSecret, x8h.Config.TwConsumerAPIKey, x8h.Config.TwConsumerSecretKey)
+		}
+		const tweetStatus = "%s\n%s"
+		hnReplacer := strings.NewReplacer("Show HN:", "", "Ask HN:", "")
+		for c := range changes {
 			if x8h.Config.LogChanges {
 				log.Println(c)
+			}
+
+			if x8h.Config.TweetChanges {
+				switch c.Action {
+				case changeAdd:
+					status := fmt.Sprintf(tweetStatus, c.Item.Title, c.Item.URL)
+					status = hnReplacer.Replace(status)
+					status = strings.TrimSpace(status)
+					tweet, err := twapi.PostTweet(status, nil)
+					if err == nil {
+						c.Item.TweetID = tweet.Id
+						log.Println("tweeted")
+					} else {
+						log.Println(err)
+					}
+				case changeRemove:
+					if c.Item.TweetID != 0 {
+						_, err := twapi.DeleteTweet(c.Item.TweetID, false)
+						if err != nil {
+							log.Println(err)
+						} else {
+							log.Println("tweet deleted")
+						}
+					}
+				default:
+					log.Println(c)
+				}
 			}
 		}
 	}
@@ -497,24 +547,28 @@ func main() {
 		for range intervalTicker.C {
 			log.Println("starting ticker ticker")
 			eg, ctx := errgroup.WithContext(appCtx)
-			eg.Go(func() error {
-				return existingItemsUpdater(appCtx, x8h.Config.FrontPageNumArticles)
-			})
-			eg.Go(func() error {
-				log.Println("starting top stories fetcher")
-				return topStoriesFetcher(ctx, x8h.Config.FrontPageNumArticles)
-			})
-			eg.Go(func() error {
-				log.Println("starting file stories fetcher")
-				return serverInputsToUserFetcher(ctx, appStorage)
-			})
+			if x8h.Config.ReadFromHN {
+				eg.Go(func() error {
+					return existingHNItemsUpdater(appCtx, x8h.Config.FrontPageNumArticles)
+				})
+				eg.Go(func() error {
+					log.Println("starting top stories fetcher")
+					return topStoriesFetcher(ctx, x8h.Config.FrontPageNumArticles)
+				})
+			}
+			if x8h.Config.ReadFromFile {
+				eg.Go(func() error {
+					log.Println("starting file stories fetcher")
+					return serverInputsToUserFetcher(ctx, appStorage)
+				})
+			}
 			eg.Go(func() error {
 				log.Println("starting story remover")
 				return storyRemover(ctx)
 			})
 			eg.Go(func() error {
 				log.Println("dumping the app")
-				return dumpApp()
+				return appDumper()
 			})
 			err := eg.Wait()
 			if err != nil {
@@ -537,13 +591,17 @@ func main() {
 
 	go func() {
 		log.Println("starting top stories fetcher")
-		err := serverInputsToUserFetcher(appCtx, appStorage)
-		if err != nil {
-			log.Println(err)
+		if x8h.Config.ReadFromFile {
+			err := serverInputsToUserFetcher(appCtx, appStorage)
+			if err != nil {
+				log.Println(err)
+			}
 		}
-		err = topStoriesFetcher(appCtx, x8h.Config.FrontPageNumArticles)
-		if err != nil {
-			log.Println(err)
+		if x8h.Config.ReadFromHN {
+			err := topStoriesFetcher(appCtx, x8h.Config.FrontPageNumArticles)
+			if err != nil {
+				log.Println(err)
+			}
 		}
 	}()
 
@@ -577,7 +635,7 @@ func main() {
 		cancel()
 		intervalTicker.Stop()
 		close(incomingItems)
-		close(changeCh)
+		close(changes)
 		close(errCh)
 		close(serverErrors)
 	}()
