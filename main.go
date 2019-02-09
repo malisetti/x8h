@@ -302,23 +302,27 @@ func main() {
 	}
 
 	existingHNItemsUpdater := func(ctx context.Context, limit int) error {
-		itemIds, err := fetchTopHNStories(ctx, limit)
+		topItemIds, err := fetchTopHNStories(ctx, limit)
 		if err != nil {
 			return err
 		}
 		var olderItems []int
-		for ID := range x8h.LimitQueue.Store {
-			exists := false
-			for _, id := range itemIds {
-				if id == ID {
-					exists = true
-					break
+		func() {
+			x8h.RLock()
+			defer x8h.RUnlock()
+			for ID := range x8h.LimitQueue.Store {
+				exists := false
+				for _, id := range topItemIds {
+					if id == ID {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					olderItems = append(olderItems, ID)
 				}
 			}
-			if !exists {
-				olderItems = append(olderItems, ID)
-			}
-		}
+		}()
 
 		for _, ID := range olderItems {
 			if appCtx.Err() != nil {
@@ -340,12 +344,16 @@ func main() {
 	storyLister := func(ctx context.Context) {
 		for item := range incomingItems {
 
-			previousItem, ok := x8h.LimitQueue.Store[item.ID]
-			if ok {
-				item.Added = previousItem.Added
-			} else if item.Added == 0 {
-				item.Added = unixTime(time.Now().Unix())
-			}
+			func() {
+				x8h.RLock()
+				defer x8h.RUnlock()
+				previousItem, ok := x8h.LimitQueue.Store[item.ID]
+				if ok {
+					item.Added = previousItem.Added
+				} else if item.Added == 0 {
+					item.Added = unixTime(time.Now().Unix())
+				}
+			}()
 
 			if item.Domain == "" {
 				domain, err := urlToDomain(item.URL)
@@ -387,43 +395,47 @@ func main() {
 				return err
 			}
 		}
-
-		for id, it := range x8h.LimitQueue.Store {
-			if ctx.Err() != nil {
-				return nil
-			}
-
-			stillAtTop := false
-			switch it.From {
-			case itemFromHN:
-				for _, tid := range topItems {
-					if tid == id {
-						stillAtTop = true
-						break
-					}
+		err := func() error {
+			x8h.RLock()
+			defer x8h.RUnlock()
+			for id, it := range x8h.LimitQueue.Store {
+				if ctx.Err() != nil {
+					return nil
 				}
-			case itemFromFile:
-				stillAtTop = false // will remove anything from file after 8hrs
-			default:
-				stillAtTop = false
-			}
 
-			if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)) > x8h.Config.DeletionPeriod*time.Second {
-				func() {
-					x8h.Lock()
-					defer x8h.Unlock()
-					it := x8h.LimitQueue.remove(id)
-					if it != nil {
-						// send these to removed chan
-						changes <- change{
-							Action: changeRemove,
-							Item:   it,
+				stillAtTop := false
+				switch it.From {
+				case itemFromHN:
+					for _, tid := range topItems {
+						if tid == id {
+							stillAtTop = true
+							break
 						}
 					}
-				}()
+				case itemFromFile:
+					stillAtTop = false // will remove anything from file after 8hrs
+				default:
+					stillAtTop = false
+				}
+
+				if !stillAtTop && time.Since(time.Unix(int64(it.Added), 0)) > x8h.Config.DeletionPeriod*time.Second {
+					func() {
+						x8h.Lock()
+						defer x8h.Unlock()
+						it := x8h.LimitQueue.remove(id)
+						if it != nil {
+							// send these to removed chan
+							changes <- change{
+								Action: changeRemove,
+								Item:   it,
+							}
+						}
+					}()
+				}
 			}
-		}
-		return nil
+			return nil
+		}()
+		return err
 	}
 
 	changeLogger := func() {
@@ -512,10 +524,15 @@ func main() {
 			x8h.VisitCount++
 		}()
 
-		data["Data"] = x8h.LimitQueue.Store
-		data["Visits"] = x8h.VisitCount
-		data["Version"] = version
-		err = tmpl.Execute(&buf, data)
+		var err error
+		func() {
+			x8h.RLock()
+			defer x8h.RUnlock()
+			data["Data"] = x8h.LimitQueue.Store
+			data["Visits"] = x8h.VisitCount
+			data["Version"] = version
+			err = tmpl.Execute(&buf, data)
+		}()
 
 		if err != nil {
 			errCh <- appErr{
